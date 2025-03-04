@@ -1313,36 +1313,41 @@ async def continue_shopping(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
-@router.callback_query(F.data == "back_to_cart", OrderState.selecting_category)
+@router.callback_query(F.data == "back_to_cart", OrderState.cart_management)
 async def back_to_cart(callback: types.CallbackQuery, state: FSMContext):
     try:
         user_data = await state.get_data()
         cart = user_data.get("cart", [])
         store = user_data.get("store")
-        if not store:
-            raise ValueError("Store not found in state data")
+        discount = user_data.get("discount", 0)
         lang = get_user_language(callback.from_user.id)
-        
+
         if not cart:
             await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
             await state.clear()
             return
-        
+
         cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
+        total_uzs = sum(item["price"] for item in cart)
+        final_total = total_uzs - discount
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
             [InlineKeyboardButton(text="🚀 Checkout", callback_data="checkout")],
             [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
         ])
-        await callback.message.edit_text(f"Cart:\n{cart_text}", reply_markup=keyboard)
+        await callback.message.edit_text(
+            f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {final_total} UZS",
+            reply_markup=keyboard
+        )
         await state.set_state(OrderState.cart_management)
         await callback.answer()
     except Exception as e:
         logging.error(f"Error in back_to_cart: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
+        
 @router.callback_query(F.data == "apply_promo", OrderState.cart_management)
 async def apply_promo_prompt(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1354,7 +1359,7 @@ async def apply_promo_prompt(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"Error in apply_promo_prompt: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
+        
 @router.message(OrderState.waiting_for_promo)
 async def process_promo_code(message: Message, state: FSMContext):
     try:
@@ -1405,10 +1410,8 @@ async def process_promo_code(message: Message, state: FSMContext):
 async def select_payment_method(callback: types.CallbackQuery, state: FSMContext):
     try:
         lang = get_user_language(callback.from_user.id)
-        # Temporarily limiting payment options to Cash only
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=LANGUAGES[lang]["pay_cash"], callback_data="payment_cash")],
-            # [InlineKeyboardButton(text=LANGUAGES[lang]["pay_card"], callback_data="payment_card")],
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]
         ])
         await callback.message.edit_text(LANGUAGES[lang]["select_payment"], reply_markup=keyboard)
@@ -1418,7 +1421,7 @@ async def select_payment_method(callback: types.CallbackQuery, state: FSMContext
         logging.error(f"Error in select_payment_method: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
+        
 @router.callback_query(F.data == "select_payment", OrderState.cart_management)
 async def select_payment_method(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1741,69 +1744,56 @@ async def use_existing_card(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "checkout", OrderState.cart_management)
 async def checkout(callback: types.CallbackQuery, state: FSMContext):
-    logging.info(f"Checkout triggered by user {callback.from_user.id}")
     try:
+        # Check working hours
         if not is_within_working_hours():
             lang = get_user_language(callback.from_user.id)
             await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
             await callback.answer()
             return
 
-        # Get state data with additional logging
+        # Retrieve state data
         user_data = await state.get_data()
-        logging.info(f"State data: {user_data}")
-        
-        # Check required keys with detailed logging
-        required_keys = ["cart", "user_id", "latitude", "longitude", "store"]
-        missing_keys = [key for key in required_keys if key not in user_data or user_data[key] is None]
-        if missing_keys:
-            logging.error(f"Missing state data: {missing_keys}")
-            lang = get_user_language(callback.from_user.id)
-            await callback.message.edit_text(f"Error: Incomplete order data ({', '.join(missing_keys)} missing). Please start over.")
-            await state.clear()
-            return
+        cart = user_data.get("cart", [])
+        store = user_data.get("store")
+        discount = user_data.get("discount", 0)
 
-        cart = user_data["cart"]
-        lang = get_user_language(callback.from_user.id)
-        logging.info(f"Cart contents: {cart}")
-        
-        if not cart or not isinstance(cart, list) or len(cart) == 0:
-            logging.warning(f"Cart is empty or invalid: {cart}")
+        # Validate cart
+        if not cart:
+            lang = get_user_language(callback.from_user.id)
             await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
             await state.clear()
             return
 
-        # Calculate total and prepare cart text
+        # Calculate totals and prepare cart text
+        lang = get_user_language(callback.from_user.id)
         cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
         total_uzs = sum(item["price"] for item in cart)
-        discount = user_data.get("discount", 0)
-        logging.info(f"Total: {total_uzs} UZS, Discount: {discount} UZS")
+        final_total = total_uzs - discount
 
-        # Prepare keyboard with payment selection
+        # Prepare keyboard with all options
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Proceed to Payment", callback_data="select_payment")],
             [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]
         ])
-        
-        # Send the message to proceed to payment
+
+        # Display cart summary
         await callback.message.edit_text(
-            f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {total_uzs - discount} UZS",
+            f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {final_total} UZS",
             reply_markup=keyboard
         )
+
+        # Ensure state remains in cart_management for further actions
+        await state.set_state(OrderState.cart_management)
         await callback.answer()
 
-    except sqlite3.Error as db_error:
-        logging.error(f"Database error in checkout: {db_error}")
-        lang = get_user_language(callback.from_user.id)
-        await callback.message.edit_text("Database error occurred. Please try again later.")
-        await state.clear()
     except Exception as e:
-        logging.error(f"Unexpected error in checkout: {e}", exc_info=True)
+        logging.error(f"Error in checkout: {e}", exc_info=True)
         lang = get_user_language(callback.from_user.id)
-        await callback.message.edit_text("Something went wrong during checkout. Please try again.")
+        await callback.message.edit_text("An error occurred during checkout. Please try again.")
         await state.clear()
-
+                    
 @router.callback_query(F.data.startswith("set_delivery:"), OrderState.waiting_for_delivery_time)
 async def set_delivery_time(callback: types.CallbackQuery, state: FSMContext):
     try:
