@@ -336,11 +336,11 @@ class OrderState(StatesGroup):
     cart_management = State()
     waiting_for_promo = State()
     waiting_for_payment_method = State()
-    waiting_for_card_number = State()
-    waiting_for_card_expiry = State()
-    waiting_for_card_cvc = State()
-    waiting_for_card_phone = State()
-    waiting_for_verification_code = State()
+    # waiting_for_card_number = State()
+    # waiting_for_card_expiry = State()
+    # waiting_for_card_cvc = State()
+    # waiting_for_card_phone = State()
+    # waiting_for_verification_code = State()
     waiting_for_delivery_time = State()
     waiting_for_feedback = State()
 
@@ -440,7 +440,9 @@ def setup_db():
         )
     """)
     
-    c.execute("""
+    # Commenting out the cards table creation since we're disabling card functionality
+    """
+    c.execute(
         CREATE TABLE IF NOT EXISTS cards (
             user_id INTEGER,
             card_number TEXT,
@@ -450,7 +452,8 @@ def setup_db():
             verified INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, card_number)
         )
-    """)
+    )
+    """
     
     # Add missing columns if they don't exist
     try:
@@ -561,20 +564,19 @@ def calculate_discount(total_uzs, promo_code):
         return round(total_uzs * (discount_value / 100))
     return 0
 
+# Commented out helper functions related to card verification and payment
+"""
 def generate_verification_code():
     return str(random.randint(1000, 9999))
 
 def send_verification_sms(phone, code):
-    # This is a placeholder for SMS sending logic.
-    # In a real application, integrate with an SMS gateway (e.g., Twilio, Nexmo)
+    # Placeholder for SMS sending logic
     logging.info(f"Sending SMS to {phone}: Verification code is {code}")
     return True
 
 def process_payment_paycom(amount, card_details):
-    # This is a placeholder for Paycom payment processing
-    # Replace with actual Paycom API integration
+    # Placeholder for Paycom payment processing
     try:
-        # Example Paycom API call (simulated)
         payload = {
             "merchant_id": PAYCOM_MERCHANT_ID,
             "amount": int(amount),
@@ -582,13 +584,13 @@ def process_payment_paycom(amount, card_details):
             "expiry_date": card_details['expiry_date'],
             "cvc": card_details['cvc'],
         }
-        # Replace with actual API endpoint and headers
         response = {"status": "success"}  # Simulated response
         logging.info(f"Simulated Paycom API response: {response}")
         return response.get("status") == "success"
     except Exception as e:
         logging.error(f"Paycom payment error: {e}")
         return False
+"""
 
 async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, total_uzs: float, discount: float, promo_code: str, payment_method: str, age: str, state: FSMContext):
     await asyncio.sleep(20)  # Wait 20 seconds
@@ -1403,9 +1405,28 @@ async def process_promo_code(message: Message, state: FSMContext):
 async def select_payment_method(callback: types.CallbackQuery, state: FSMContext):
     try:
         lang = get_user_language(callback.from_user.id)
+        # Temporarily limiting payment options to Cash only
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=LANGUAGES[lang]["pay_cash"], callback_data="payment_cash")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["pay_card"], callback_data="payment_card")],
+            # [InlineKeyboardButton(text=LANGUAGES[lang]["pay_card"], callback_data="payment_card")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]
+        ])
+        await callback.message.edit_text(LANGUAGES[lang]["select_payment"], reply_markup=keyboard)
+        await state.set_state(OrderState.waiting_for_payment_method)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in select_payment_method: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.callback_query(F.data == "select_payment", OrderState.cart_management)
+async def select_payment_method(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        lang = get_user_language(callback.from_user.id)
+        # Temporarily limiting payment options to Cash only while card functionality is disabled
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=LANGUAGES[lang]["pay_cash"], callback_data="payment_cash")],
+            # [InlineKeyboardButton(text=LANGUAGES[lang]["pay_card"], callback_data="payment_card")], # Commented out for now
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]
         ])
         await callback.message.edit_text(LANGUAGES[lang]["select_payment"], reply_markup=keyboard)
@@ -1418,75 +1439,88 @@ async def select_payment_method(callback: types.CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data == "payment_cash", OrderState.waiting_for_payment_method)
 async def process_cash_payment(callback: types.CallbackQuery, state: FSMContext):
-    user_data = await state.get_data()
-    cart = user_data.get("cart", [])
-    user_id = user_data["user_id"]
-    age = user_data.get("age", "Not provided")
-    latitude = user_data["latitude"]
-    longitude = user_data["longitude"]
-    store = user_data["store"]
-    username = callback.from_user.username or "Not available"
-    discount = user_data.get("discount", 0)
-    promo_code = user_data.get("promo_code", None)
-    lang = get_user_language(user_id)
+    try:
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        user_id = user_data["user_id"]
+        age = user_data.get("age", "Not provided")
+        latitude = user_data["latitude"]
+        longitude = user_data["longitude"]
+        store = user_data["store"]
+        username = callback.from_user.username or "Not available"
+        discount = user_data.get("discount", 0)
+        promo_code = user_data.get("promo_code", None)
+        lang = get_user_language(user_id)
 
-    total_uzs = sum(item["price"] for item in cart)
-    total_usd = convert_to_usd(total_uzs)
-    cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
+        if not cart or not user_id or not store:
+            raise ValueError("Required data missing in state (cart, user_id, or store)")
 
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (user_id, cart_text, total_uzs, discount, promo_code, "Cash", age, latitude, longitude, "pending")
-    )
-    order_id = c.lastrowid
-    conn.commit()
+        total_uzs = sum(item["price"] for item in cart)
+        total_usd = convert_to_usd(total_uzs)
+        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
 
-    c.execute("SELECT name, phone FROM users WHERE user_id = ?", (user_id,))
-    user = c.fetchone()
-    conn.close()
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, cart_text, total_uzs, discount, promo_code, "Cash", age, latitude, longitude, "pending")
+        )
+        order_id = c.lastrowid
+        conn.commit()
 
-    user_message = (
-        f"Your order #{order_id}:\n"
-        f"{cart_text}\n"
-        f"Total: {total_uzs} UZS ({total_usd} USD)\n"
-        f"Discount: {discount} UZS\n"
-        f"Final Total: {total_uzs - discount} UZS"
-        f"Payment: Cash\n"
-        f"Waiting for admin to set delivery time (20 seconds timeout)..."
-    )
-    await callback.message.edit_text(user_message)
+        c.execute("SELECT name, phone FROM users WHERE user_id = ?", (user_id,))
+        user = c.fetchone()
+        conn.close()
 
-    admin_message = (
-        f"New Order #{order_id} from {user['name']}:\n"
-        f"Username: @{username}\n"
-        f"Phone: {user['phone']}\n"
-        f"Order Details:\n{cart_text}\n"
-        f"Total: {total_uzs} UZS ({total_usd} USD)\n"
-        f"Discount: {discount} UZS (Promo: {promo_code or 'None'})\n"
-        f"Final Total: {total_uzs - discount} UZS\n"
-        f"Age: {age}\n"
-        f"Payment: Cash\n"
-        f"Please set delivery time within 20 seconds or default 35 minutes will be set."
-    )
-    for admin_id in ADMIN_ID:
-        try:
-            await bot.send_message(
-                admin_id,
-                admin_message,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Set Delivery Time", callback_data=f"set_delivery:{order_id}")]
-                ])
-            )
-            await bot.send_location(admin_id, latitude=latitude, longitude=longitude)
-        except Exception as e:
-            logging.error(f"Failed to notify admin {admin_id}: {e}")
+        if not user:
+            raise ValueError("User not found in database")
 
-    asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs - discount, discount, promo_code, "Cash", age, state))
-    await state.set_state(OrderState.waiting_for_delivery_time)
-    await callback.answer()
+        user_message = (
+            f"Your order #{order_id}:\n"
+            f"{cart_text}\n"
+            f"Total: {total_uzs} UZS ({total_usd} USD)\n"
+            f"Discount: {discount} UZS\n"
+            f"Final Total: {total_uzs - discount} UZS\n"
+            f"Payment: Cash\n"
+            f"Waiting for admin to set delivery time (20 seconds timeout)..."
+        )
+        await callback.message.edit_text(user_message)
 
+        admin_message = (
+            f"New Order #{order_id} from {user['name']}:\n"
+            f"Username: @{username}\n"
+            f"Phone: {user['phone']}\n"
+            f"Order Details:\n{cart_text}\n"
+            f"Total: {total_uzs} UZS ({total_usd} USD)\n"
+            f"Discount: {discount} UZS (Promo: {promo_code or 'None'})\n"
+            f"Final Total: {total_uzs - discount} UZS\n"
+            f"Age: {age}\n"
+            f"Payment: Cash\n"
+            f"Please set delivery time within 20 seconds or default 35 minutes will be set."
+        )
+        for admin_id in ADMIN_ID:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    admin_message,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="Set Delivery Time", callback_data=f"set_delivery:{order_id}")]
+                    ])
+                )
+                await bot.send_location(admin_id, latitude=latitude, longitude=longitude)
+            except Exception as e:
+                logging.error(f"Failed to notify admin {admin_id}: {e}")
+
+        asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs - discount, discount, promo_code, "Cash", age, state))
+        await state.set_state(OrderState.waiting_for_delivery_time)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in process_cash_payment: {e}")
+        await callback.message.edit_text("Something went wrong during payment processing. Please try again.")
+        await state.clear()
+
+# Temporarily commented out card payment handlers
+"""
 @router.callback_query(F.data == "payment_card", OrderState.waiting_for_payment_method)
 async def process_card_payment(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1614,10 +1648,8 @@ async def use_existing_card(callback: types.CallbackQuery, state: FSMContext):
         
         conn = get_db_connection()
         c = conn.cursor()
-        # Get user details first
         c.execute("SELECT name, phone FROM users WHERE user_id = ?", (user_id,))
         user = c.fetchone()
-        # Then get card details
         c.execute("SELECT card_number, expiry_date, cvc FROM cards WHERE user_id = ? AND verified = 1", (user_id,))
         card = c.fetchone()
         conn.close()
@@ -1641,7 +1673,6 @@ async def use_existing_card(callback: types.CallbackQuery, state: FSMContext):
         total_usd = convert_to_usd(total_uzs)
         cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
 
-        # Process payment
         card_details = {"card_number": card["card_number"], "expiry_date": card["expiry_date"], "cvc": card["cvc"]}
         if process_payment_paycom(total_uzs - discount, card_details):
             conn = get_db_connection()
@@ -1706,6 +1737,7 @@ async def use_existing_card(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"Error in use_existing_card: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
+"""
 
 @router.callback_query(F.data == "checkout", OrderState.cart_management)
 async def checkout(callback: types.CallbackQuery, state: FSMContext):
@@ -1771,8 +1803,7 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
         lang = get_user_language(callback.from_user.id)
         await callback.message.edit_text("Something went wrong during checkout. Please try again.")
         await state.clear()
-        
-        
+
 @router.callback_query(F.data.startswith("set_delivery:"), OrderState.waiting_for_delivery_time)
 async def set_delivery_time(callback: types.CallbackQuery, state: FSMContext):
     try:
