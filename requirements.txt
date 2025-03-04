@@ -8,3 +8,4 @@ sqlite3  # Built-in, no need to specify a version
 uvicorn==0.29.0  # Needed to run FastAPI
 asyncio  # Built-in, no need to specify a version
 logging  # Built-in, no need to specify a version
+pytz

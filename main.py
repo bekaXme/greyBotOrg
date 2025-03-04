@@ -1,6 +1,8 @@
 import logging
 import sqlite3
 import asyncio
+from datetime import datetime
+import pytz
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.types import (
     Message, ReplyKeyboardMarkup, KeyboardButton, 
@@ -15,7 +17,7 @@ import geopy.distance
 
 # Configuration
 API_TOKEN = '7713134448:AAF8t-OZPCRfkYPC6PM0VGYyKXNDZytyZCM'
-ADMIN_ID = [5703082829,2100140929]
+ADMIN_ID = [5703082829, 2100140929]  # Replace with actual admin IDs
 PHONE_NUMBER = "+998910151402"
 EXCHANGE_RATE = 12700
 RESTRICTED_CATEGORIES = ["Sigarette", "Cigarettes", "Tobacco"]
@@ -29,7 +31,12 @@ router = Router()
 dp.include_router(router)
 app = FastAPI()
 
-# Language dictionaries (unchanged)
+# Working hours in Uzbekistan time (UTC+5)
+UZBEKISTAN_TZ = pytz.timezone("Asia/Tashkent")
+WORKING_HOURS_START = 8  # 8:00 AM
+WORKING_HOURS_END = 24   # 12:00 AM (midnight)
+
+# Language dictionaries
 LANGUAGES = {
     "uzb": {
         "enter_name": "Iltimos, ismingizni kiriting:",
@@ -49,7 +56,7 @@ LANGUAGES = {
         "added_to_cart": "Savatga qo'shildi:\n{name}\nNarx: {price_uzs} UZS ({price_usd} USD)\nTavsif: {description}",
         "no_categories": "{store} da kategoriyalar mavjud emas.",
         "cart_empty": "Savatingiz bo'sh!",
-        "order_summary": "Sizning buyurtmangiz:\n{cart_text}\nJami: {total_uzs} UZS ({total_usd} USD)\nYosh: {age}\n\nTo'lov: naqd\nYetkazib berish: {delivery_time} daqiqada",
+        "order_summary": "Sizning buyurtmangiz:\n{cart_text}\nJami: {total_uzs} UZS ({total_usd} USD)\nChegirma: {discount} UZS\nYosh: {age}\n\nTo'lov: naqd\nYetkazib berish: {delivery_time} daqiqada",
         "admin_no_perm": "Sizda bu amalni bajarish uchun ruxsat yo'q!",
         "select_store": "Do'konni tanlang:",
         "enter_category": "Mahsulot kategoriyasini kiriting:",
@@ -95,7 +102,20 @@ LANGUAGES = {
         "change_phone": "Telefonni o'zgartirish",
         "change_language": "Tilni o'zgartirish",
         "feedback_prompt": "Yetkazib berish bilan bog'liq muammo nima edi? Iltimos, sharhingizni yozing:",
-        "feedback_sent": "Fikringiz uchun rahmat! Biz uni yaxshilash ustida ishlaymiz."
+        "feedback_sent": "Fikringiz uchun rahmat! Biz uni yaxshilash ustida ishlaymiz.",
+        "outside_working_hours": "Kechirasiz, bot faqat soat 08:00 dan 00:00 gacha ishlaydi (O'zbekiston vaqti). Iltimos, keyinroq urinib ko'ring.",
+        "apply_promo": "Promokodni kiriting",
+        "enter_promo": "Promokodni kiriting:",
+        "promo_applied": "Promokod qo'llanildi! Chegirma: {discount} UZS",
+        "promo_invalid": "Noto'g'ri promokod. Iltimos, qaytadan urinib ko'ring.",
+        "add_promo": "Promokod qo'shish",
+        "enter_promo_code": "Yangi promokodni kiriting:",
+        "enter_discount_type": "Chegirma turini tanlang:",
+        "discount_fixed": "Fiks summa",
+        "discount_percent": "Foiz",
+        "enter_discount_value": "Chegirma qiymatini kiriting ({type}):",
+        "promo_added": "Promokod '{code}' muvaffaqiyatli qo'shildi! Chegirma: {value} ({type})",
+        "promo_exists": "Bu promokod allaqachon mavjud. Boshqa kod kiriting."
     },
     "eng": {
         "enter_name": "Please enter your name:",
@@ -115,7 +135,7 @@ LANGUAGES = {
         "added_to_cart": "Added to cart:\n{name}\nPrice: {price_uzs} UZS ({price_usd} USD)\nDescription: {description}",
         "no_categories": "No categories available in {store}.",
         "cart_empty": "Your cart is empty!",
-        "order_summary": "Your order:\n{cart_text}\nTotal: {total_uzs} UZS ({total_usd} USD)\nAge: {age}\n\nPayment: Cash on delivery\nDelivery in: {delivery_time} minutes",
+        "order_summary": "Your order:\n{cart_text}\nTotal: {total_uzs} UZS ({total_usd} USD)\nDiscount: {discount} UZS\nAge: {age}\n\nPayment: Cash on delivery\nDelivery in: {delivery_time} minutes",
         "admin_no_perm": "You don't have permission to perform this action!",
         "select_store": "Select a store:",
         "enter_category": "Enter product category:",
@@ -161,7 +181,20 @@ LANGUAGES = {
         "change_phone": "Change Phone",
         "change_language": "Change Language",
         "feedback_prompt": "What was the problem with the delivery? Please leave your comment:",
-        "feedback_sent": "Thank you for your feedback! We'll work on improving."
+        "feedback_sent": "Thank you for your feedback! We'll work on improving.",
+        "outside_working_hours": "Sorry, the bot operates only from 08:00 to 00:00 (Uzbekistan time). Please try again later.",
+        "apply_promo": "Apply Promo Code",
+        "enter_promo": "Enter promo code:",
+        "promo_applied": "Promo code applied! Discount: {discount} UZS",
+        "promo_invalid": "Invalid promo code. Please try again.",
+        "add_promo": "Add Promo Code",
+        "enter_promo_code": "Enter new promo code:",
+        "enter_discount_type": "Select discount type:",
+        "discount_fixed": "Fixed Amount",
+        "discount_percent": "Percentage",
+        "enter_discount_value": "Enter discount value ({type}):",
+        "promo_added": "Promo code '{code}' added successfully! Discount: {value} ({type})",
+        "promo_exists": "This promo code already exists. Try a different code."
     },
     "rus": {
         "enter_name": "Пожалуйста, введите ваше имя:",
@@ -181,7 +214,7 @@ LANGUAGES = {
         "added_to_cart": "Добавлено в корзину:\n{name}\nЦена: {price_uzs} UZS ({price_usd} USD)\nОписание: {description}",
         "no_categories": "В {store} нет категорий.",
         "cart_empty": "Ваша корзина пуста!",
-        "order_summary": "Ваш заказ:\n{cart_text}\nИтого: {total_uzs} UZS ({total_usd} USD)\nВозраст: {age}\n\nОплата: Наличными при доставке\nДоставка через: {delivery_time} минут",
+        "order_summary": "Ваш заказ:\n{cart_text}\nИтого: {total_uzs} UZS ({total_usd} USD)\nСкидка: {discount} UZS\nВозраст: {age}\n\nОплата: Наличными при доставке\nДоставка через: {delivery_time} минут",
         "admin_no_perm": "У вас нет разрешения на выполнение этого действия!",
         "select_store": "Выберите магазин:",
         "enter_category": "Введите категорию товара:",
@@ -227,7 +260,20 @@ LANGUAGES = {
         "change_phone": "Изменить телефон",
         "change_language": "Изменить язык",
         "feedback_prompt": "В чем была проблема с доставкой? Пожалуйста, оставьте ваш комментарий:",
-        "feedback_sent": "Спасибо за ваш отзыв! Мы будем работать над улучшением."
+        "feedback_sent": "Спасибо за ваш отзыв! Мы будем работать над улучшением.",
+        "outside_working_hours": "Извините, бот работает только с 08:00 до 00:00 (время Узбекистана). Попробуйте позже.",
+        "apply_promo": "Применить промокод",
+        "enter_promo": "Введите промокод:",
+        "promo_applied": "Промокод применен! Скидка: {discount} UZS",
+        "promo_invalid": "Неверный промокод. Попробуйте еще раз.",
+        "add_promo": "Добавить промокод",
+        "enter_promo_code": "Введите новый промокод:",
+        "enter_discount_type": "Выберите тип скидки:",
+        "discount_fixed": "Фиксированная сумма",
+        "discount_percent": "Процент",
+        "enter_discount_value": "Введите значение скидки ({type}):",
+        "promo_added": "Промокод '{code}' успешно добавлен! Скидка: {value} ({type})",
+        "promo_exists": "Этот промокод уже существует. Введите другой код."
     }
 }
 
@@ -246,6 +292,7 @@ class OrderState(StatesGroup):
     selecting_brand = State()
     selecting_product = State()
     cart_management = State()
+    waiting_for_promo = State()
     waiting_for_delivery_time = State()
     waiting_for_feedback = State()
 
@@ -271,6 +318,11 @@ class SettingsState(StatesGroup):
     waiting_for_new_name = State()
     waiting_for_new_phone = State()
     waiting_for_new_language = State()
+
+class AddPromoState(StatesGroup):
+    waiting_for_code = State()
+    waiting_for_discount_type = State()
+    waiting_for_discount_value = State()
 
 # Database setup
 def get_db_connection():
@@ -321,6 +373,8 @@ def setup_db():
             user_id INTEGER,
             cart_text TEXT,
             total_uzs REAL,
+            discount REAL DEFAULT 0,
+            promo_code TEXT,
             age TEXT,
             latitude REAL,
             longitude REAL,
@@ -329,15 +383,31 @@ def setup_db():
         )
     """)
     
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS promo_codes (
+            code TEXT PRIMARY KEY,
+            discount_type TEXT,  -- 'fixed' or 'percent'
+            discount_value REAL
+        )
+    """)
+    
     # Add missing columns if they don't exist
     try:
         c.execute("ALTER TABLE orders ADD COLUMN latitude REAL")
     except sqlite3.OperationalError:
-        pass  # Column already exists
+        pass
     try:
         c.execute("ALTER TABLE orders ADD COLUMN longitude REAL")
     except sqlite3.OperationalError:
-        pass  # Column already exists
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN discount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN promo_code TEXT")
+    except sqlite3.OperationalError:
+        pass
     
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
               (1, 'Store 1', 41.291848, 69.211190))
@@ -402,8 +472,31 @@ def get_nearest_store(user_lat, user_lon):
             nearest_store = store['name']
     return nearest_store
 
-# New function to automatically set delivery time
-async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, total_uzs: float, age: str, state: FSMContext):
+def is_within_working_hours():
+    now = datetime.now(UZBEKISTAN_TZ)
+    current_hour = now.hour
+    return WORKING_HOURS_START <= current_hour < WORKING_HOURS_END
+
+def calculate_discount(total_uzs, promo_code):
+    if not promo_code:
+        return 0
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT discount_type, discount_value FROM promo_codes WHERE code = ?", (promo_code,))
+    promo = c.fetchone()
+    conn.close()
+    
+    if not promo:
+        return 0
+    
+    discount_type, discount_value = promo['discount_type'], promo['discount_value']
+    if discount_type == 'fixed':
+        return discount_value
+    elif discount_type == 'percent':
+        return round(total_uzs * (discount_value / 100))
+    return 0
+
+async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, total_uzs: float, discount: float, promo_code: str, age: str, state: FSMContext):
     await asyncio.sleep(20)  # Wait 20 seconds
     try:
         conn = get_db_connection()
@@ -423,6 +516,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
                 cart_text=cart_text,
                 total_uzs=total_uzs,
                 total_usd=total_usd,
+                discount=discount,
                 age=age,
                 delivery_time=default_delivery_time
             )
@@ -435,7 +529,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
             logging.info(f"Order #{order_id} auto-confirmed with 35-minute delivery.")
         
         conn.close()
-        await state.clear()  # Clear state after auto-setting
+        await state.clear()
     except Exception as e:
         logging.error(f"Error in auto_set_delivery_time for order {order_id}: {e}")
 
@@ -684,6 +778,12 @@ async def back_to_main_settings(callback: types.CallbackQuery, state: FSMContext
 @router.callback_query(F.data == "start_ordering", RegisterState.waiting_for_order)
 async def start_ordering_prompt(callback: types.CallbackQuery, state: FSMContext):
     try:
+        if not is_within_working_hours():
+            lang = get_user_language(callback.from_user.id)
+            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
+            await callback.answer()
+            return
+
         lang = get_user_language(callback.from_user.id)
         keyboard = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="📍 Send Location", request_location=True)]],
@@ -703,7 +803,7 @@ async def order_command(message: Message, state: FSMContext):
     if not is_fully_registered(message.from_user.id):
         await message.answer("Please register first using /start")
         return
-    
+        
     lang = get_user_language(message.from_user.id)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=LANGUAGES[lang]["order_button"], callback_data="start_ordering"),
@@ -716,6 +816,12 @@ async def order_command(message: Message, state: FSMContext):
 @router.message(F.location, OrderState.waiting_for_location)
 async def process_location(message: Message, state: FSMContext):
     try:
+        if not is_within_working_hours():
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["outside_working_hours"], reply_markup=types.ReplyKeyboardRemove())
+            await state.clear()
+            return
+
         user_lat, user_lon = message.location.latitude, message.location.longitude
         store = get_nearest_store(user_lat, user_lon)
         lang = get_user_language(message.from_user.id)
@@ -740,6 +846,12 @@ async def process_location(message: Message, state: FSMContext):
 @router.callback_query(F.data == "order_start", OrderState.selecting_action)
 async def start_ordering(callback: types.CallbackQuery, state: FSMContext):
     try:
+        if not is_within_working_hours():
+            lang = get_user_language(callback.from_user.id)
+            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
+            await callback.answer()
+            return
+
         user_data = await state.get_data()
         store = user_data.get("store")
         if not store:
@@ -810,6 +922,12 @@ async def back_to_main_from_action(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(F.data.startswith("cat:"), OrderState.selecting_category)
 async def process_category(callback: types.CallbackQuery, state: FSMContext):
     try:
+        if not is_within_working_hours():
+            lang = get_user_language(callback.from_user.id)
+            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
+            await callback.answer()
+            return
+
         parts = callback.data.split(":")
         if len(parts) != 3:
             raise ValueError("Invalid callback data format")
@@ -1065,6 +1183,12 @@ async def back_to_product(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("more:"), OrderState.cart_management)
 async def continue_shopping(callback: types.CallbackQuery, state: FSMContext):
     try:
+        if not is_within_working_hours():
+            lang = get_user_language(callback.from_user.id)
+            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
+            await callback.answer()
+            return
+
         store = callback.data.split(":")[1]
         lang = get_user_language(callback.from_user.id)
         
@@ -1110,7 +1234,8 @@ async def back_to_cart(callback: types.CallbackQuery, state: FSMContext):
         cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
-            [InlineKeyboardButton(text="🚀 Checkout", callback_data="checkout")],
+            [InlineKeyboardButton(text="🚀 Checkout", callback_data="proceed_to_promo")],
+            [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
         ])
         await callback.message.edit_text(f"Cart:\n{cart_text}", reply_markup=keyboard)
@@ -1121,10 +1246,143 @@ async def back_to_cart(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
+@router.callback_query(F.data == "apply_promo", OrderState.cart_management)
+async def apply_promo_prompt(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        lang = get_user_language(callback.from_user.id)
+        await callback.message.edit_text(LANGUAGES[lang]["enter_promo"])
+        await state.set_state(OrderState.waiting_for_promo)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in apply_promo_prompt: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.message(OrderState.waiting_for_promo)
+async def process_promo_code(message: Message, state: FSMContext):
+    try:
+        promo_code = message.text.strip()
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        store = user_data.get("store")
+        lang = get_user_language(message.from_user.id)
+
+        if not cart:
+            await message.answer(LANGUAGES[lang]["cart_empty"])
+            await state.clear()
+            return
+
+        total_uzs = sum(item["price"] for item in cart)
+        discount = calculate_discount(total_uzs, promo_code)
+
+        if discount == 0:
+            await message.answer(LANGUAGES[lang]["promo_invalid"])
+            cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
+                [InlineKeyboardButton(text="🚀 Checkout", callback_data="proceed_to_promo")],
+                [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
+                [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
+            ])
+            await message.answer(f"Cart:\n{cart_text}", reply_markup=keyboard)
+            await state.set_state(OrderState.cart_management)
+            return
+
+        await state.update_data(promo_code=promo_code, discount=discount)
+        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
+            [InlineKeyboardButton(text="🚀 Checkout", callback_data="proceed_to_promo")],
+            [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
+        ])
+        await message.answer(LANGUAGES[lang]["promo_applied"].format(discount=discount))
+        await message.answer(f"Cart:\n{cart_text}", reply_markup=keyboard)
+        await state.set_state(OrderState.cart_management)
+    except Exception as e:
+        logging.error(f"Error in process_promo_code: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.callback_query(F.data == "proceed_to_promo", OrderState.cart_management)
+async def proceed_to_promo(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        store = user_data.get("store")
+        lang = get_user_language(callback.from_user.id)
+
+        if not cart:
+            await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
+            await state.clear()
+            return
+
+        total_uzs = sum(item["price"] for item in cart)
+        discount = user_data.get("discount", 0)
+        promo_code = user_data.get("promo_code", None)
+
+        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
+        total_after_discount = total_uzs - discount
+        message_text = (
+            f"Cart:\n{cart_text}\n"
+            f"Total: {total_uzs} UZS\n"
+            f"Discount: {discount} UZS\n"
+            f"Final Total: {total_after_discount} UZS\n\n"
+            f"Proceed to checkout?"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Confirm", callback_data="checkout")],
+            [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart_from_promo")]
+        ])
+        await callback.message.edit_text(message_text, reply_markup=keyboard)
+        await state.set_state(OrderState.cart_management)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in proceed_to_promo: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.callback_query(F.data == "back_to_cart_from_promo", OrderState.cart_management)
+async def back_to_cart_from_promo(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        store = user_data.get("store")
+        if not store:
+            raise ValueError("Store not found in state data")
+        lang = get_user_language(callback.from_user.id)
+        
+        if not cart:
+            await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
+            await state.clear()
+            return
+        
+        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
+            [InlineKeyboardButton(text="🚀 Checkout", callback_data="proceed_to_promo")],
+            [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
+        ])
+        await callback.message.edit_text(f"Cart:\n{cart_text}", reply_markup=keyboard)
+        await state.set_state(OrderState.cart_management)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in back_to_cart_from_promo: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.callback_query(F.data == "checkout", OrderState.cart_management)
 async def checkout(callback: types.CallbackQuery, state: FSMContext):
     logging.info(f"Checkout triggered by user {callback.from_user.id}")
     try:
+        if not is_within_working_hours():
+            lang = get_user_language(callback.from_user.id)
+            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
+            await callback.answer()
+            return
+
         user_data = await state.get_data()
         logging.info(f"State data: {user_data}")
         
@@ -1142,6 +1400,9 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
         latitude = user_data["latitude"]
         longitude = user_data["longitude"]
         store = user_data["store"]
+        username = callback.from_user.username or "Not available"
+        discount = user_data.get("discount", 0)
+        promo_code = user_data.get("promo_code", None)
         lang = get_user_language(user_id)
 
         if not cart or not isinstance(cart, list) or len(cart) == 0:
@@ -1153,13 +1414,13 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
         total_uzs = sum(item["price"] for item in cart)
         total_usd = convert_to_usd(total_uzs)
         cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-        logging.info(f"Order summary: {cart_text}, Total: {total_uzs} UZS")
+        logging.info(f"Order summary: {cart_text}, Total: {total_uzs} UZS, Discount: {discount} UZS")
 
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(
-            "INSERT INTO orders (user_id, cart_text, total_uzs, age, latitude, longitude, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, cart_text, total_uzs, age, latitude, longitude, "pending")
+            "INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, age, latitude, longitude, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, cart_text, total_uzs, discount, promo_code, age, latitude, longitude, "pending")
         )
         order_id = c.lastrowid
         conn.commit()
@@ -1178,17 +1439,22 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
         user_message = (
             f"Your order #{order_id}:\n"
             f"{cart_text}\n"
-            f"Total: {total_uzs} UZS ({total_usd} USD)\n\n"
+            f"Total: {total_uzs} UZS ({total_usd} USD)\n"
+            f"Discount: {discount} UZS\n"
+            f"Final Total: {total_uzs - discount} UZS\n\n"
             f"Waiting for admin to set delivery time (20 seconds timeout)..."
         )
         await callback.message.edit_text(user_message)
 
         admin_message = (
             f"New Order #{order_id} from {user['name']}:\n"
+            f"Username: @{username}\n"
             f"Phone: {user['phone']}\n"
             f"Location: Latitude {latitude}, Longitude {longitude}\n"
             f"Order Details:\n{cart_text}\n"
             f"Total: {total_uzs} UZS ({total_usd} USD)\n"
+            f"Discount: {discount} UZS (Promo: {promo_code or 'None'})\n"
+            f"Final Total: {total_uzs - discount} UZS\n"
             f"Age: {age}\n"
             f"Payment: Cash on delivery\n"
             f"Please set delivery time within 20 seconds or default 35 minutes will be set."
@@ -1206,7 +1472,7 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
                 logging.error(f"Failed to notify admin {admin_id}: {e}")
 
         # Start the timeout task for default delivery time
-        asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs, age, state))
+        asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs - discount, discount, promo_code, age, state))
 
         await state.set_state(OrderState.waiting_for_delivery_time)
         await callback.answer()
@@ -1270,7 +1536,7 @@ async def process_delivery_time(message: Message, state: FSMContext):
         
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT user_id, cart_text, total_uzs, age FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
+        c.execute("SELECT user_id, cart_text, total_uzs, discount, age FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
         order = c.fetchone()
         
         if not order:
@@ -1279,7 +1545,7 @@ async def process_delivery_time(message: Message, state: FSMContext):
             conn.close()
             return
         
-        user_id, cart_text, total_uzs, age = order
+        user_id, cart_text, total_uzs, discount, age = order
         c.execute("UPDATE orders SET delivery_time = ?, status = 'confirmed' WHERE id = ?", (delivery_time, order_id))
         conn.commit()
         conn.close()
@@ -1290,6 +1556,7 @@ async def process_delivery_time(message: Message, state: FSMContext):
             cart_text=cart_text,
             total_uzs=total_uzs,
             total_usd=total_usd,
+            discount=discount,
             age=age,
             delivery_time=delivery_time
         )
@@ -1383,7 +1650,7 @@ async def process_feedback(message: Message, state: FSMContext):
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
-# Admin handlers
+# Admin handlers for products
 @router.message(Command("add_product"))
 async def add_product_command(message: Message, state: FSMContext):
     if message.from_user.id not in ADMIN_ID:
@@ -1528,7 +1795,7 @@ async def edit_product_callback(callback: types.CallbackQuery, state: FSMContext
             await callback.message.edit_text(LANGUAGES["eng"]["admin_no_perm"])
             return
         product_id = int(callback.data.split(":")[1])
-        await state.update_data(product_id=        product_id)
+        await state.update_data(product_id=product_id)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Store", callback_data="field:store")],
             [InlineKeyboardButton(text="Category", callback_data="field:category")],
@@ -1704,6 +1971,87 @@ async def process_new_value(message: Message, state: FSMContext):
         await state.clear()
     except Exception as e:
         logging.error(f"Error in process_new_value: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
+# Admin handlers for promo codes
+@router.message(Command("add_promo"))
+async def add_promo_command(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_ID:
+        await message.answer(LANGUAGES["eng"]["admin_no_perm"])
+        return
+    
+    await message.answer(LANGUAGES["eng"]["enter_promo_code"])
+    await state.set_state(AddPromoState.waiting_for_code)
+
+@router.message(AddPromoState.waiting_for_code)
+async def process_promo_code_input(message: Message, state: FSMContext):
+    promo_code = message.text.strip()
+    if not promo_code:
+        await message.answer("Promo code cannot be empty. Please try again.")
+        return
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT code FROM promo_codes WHERE code = ?", (promo_code,))
+    if c.fetchone():
+        await message.answer(LANGUAGES["eng"]["promo_exists"])
+        conn.close()
+        return
+    
+    conn.close()
+    await state.update_data(promo_code=promo_code)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=LANGUAGES["eng"]["discount_fixed"], callback_data="discount_type:fixed")],
+        [InlineKeyboardButton(text=LANGUAGES["eng"]["discount_percent"], callback_data="discount_type:percent")]
+    ])
+    await message.answer(LANGUAGES["eng"]["enter_discount_type"], reply_markup=keyboard)
+    await state.set_state(AddPromoState.waiting_for_discount_type)
+
+@router.callback_query(F.data.startswith("discount_type:"), AddPromoState.waiting_for_discount_type)
+async def process_discount_type(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        discount_type = callback.data.split(":")[1]
+        await state.update_data(discount_type=discount_type)
+        display_type = "UZS" if discount_type == "fixed" else "%"
+        await callback.message.edit_text(LANGUAGES["eng"]["enter_discount_value"].format(type=display_type))
+        await state.set_state(AddPromoState.waiting_for_discount_value)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in process_discount_type: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.message(AddPromoState.waiting_for_discount_value)
+async def process_discount_value(message: Message, state: FSMContext):
+    try:
+        discount_value = float(message.text.strip())
+        if discount_value <= 0:
+            await message.answer("Discount value must be positive. Please try again.")
+            return
+        
+        data = await state.get_data()
+        promo_code = data.get("promo_code")
+        discount_type = data.get("discount_type")
+        
+        if discount_type == "percent" and discount_value > 100:
+            await message.answer("Percentage discount cannot exceed 100%. Please try again.")
+            return
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("INSERT INTO promo_codes (code, discount_type, discount_value) VALUES (?, ?, ?)",
+                  (promo_code, discount_type, discount_value))
+        conn.commit()
+        conn.close()
+        
+        display_type = "UZS" if discount_type == "fixed" else "%"
+        await message.answer(LANGUAGES["eng"]["promo_added"].format(code=promo_code, value=discount_value, type=display_type))
+        await state.clear()
+    except ValueError:
+        await message.answer("Please enter a valid numeric value!")
+    except Exception as e:
+        logging.error(f"Error in process_discount_value: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
