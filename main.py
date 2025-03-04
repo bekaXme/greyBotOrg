@@ -1235,7 +1235,7 @@ async def back_to_cart(callback: types.CallbackQuery, state: FSMContext):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
             [InlineKeyboardButton(text="🚀 Checkout", callback_data="proceed_to_promo")],
-            [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],  # Ensure button is present
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
         ])
         await callback.message.edit_text(f"Cart:\n{cart_text}", reply_markup=keyboard)
@@ -1245,7 +1245,7 @@ async def back_to_cart(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"Error in back_to_cart: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
+        
 @router.callback_query(F.data == "apply_promo", OrderState.cart_management)
 async def apply_promo_prompt(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1303,7 +1303,6 @@ async def process_promo_code(message: Message, state: FSMContext):
         logging.error(f"Error in process_promo_code: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
-
 @router.callback_query(F.data == "proceed_to_promo", OrderState.cart_management)
 async def proceed_to_promo(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1332,7 +1331,7 @@ async def proceed_to_promo(callback: types.CallbackQuery, state: FSMContext):
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Confirm", callback_data="checkout")],
-            [InlineKeyboardButton(text="📝 Apply Promo Code", callback_data="apply_promo")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],  # Ensure button is present
             [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart_from_promo")]
         ])
         await callback.message.edit_text(message_text, reply_markup=keyboard)
@@ -1450,7 +1449,6 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
             f"New Order #{order_id} from {user['name']}:\n"
             f"Username: @{username}\n"
             f"Phone: {user['phone']}\n"
-            f"Location: Latitude {latitude}, Longitude {longitude}\n"
             f"Order Details:\n{cart_text}\n"
             f"Total: {total_uzs} UZS ({total_usd} USD)\n"
             f"Discount: {discount} UZS (Promo: {promo_code or 'None'})\n"
@@ -1461,12 +1459,19 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
         )
         for admin_id in ADMIN_ID:
             try:
+                # Send the text message first
                 await bot.send_message(
                     admin_id,
                     admin_message,
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="Set Delivery Time", callback_data=f"set_delivery:{order_id}")]
                     ])
+                )
+                # Send the user's location as a map pin
+                await bot.send_location(
+                    admin_id,
+                    latitude=latitude,
+                    longitude=longitude
                 )
             except Exception as e:
                 logging.error(f"Failed to notify admin {admin_id}: {e}")
@@ -1484,7 +1489,7 @@ async def checkout(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"Unexpected error in checkout: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
+        
 @router.callback_query(F.data.startswith("set_delivery:"), OrderState.waiting_for_delivery_time)
 async def set_delivery_time(callback: types.CallbackQuery, state: FSMContext):
     try:
