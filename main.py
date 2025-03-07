@@ -55,7 +55,7 @@ LANGUAGES = {
         "send_phone": "Iltimos, telefon raqamingizni yuboring:",
         "use_button": "Iltimos, tugmani ishlating!",
         "reg_complete": "Ro'yxatdan o'tish tugallandi!\nIsm: {name}\nTelefon: {phone}",
-        "order_prompt": "Buyurtma berish uchun tugmani bosing:",
+        "order_prompt": " berish uchun tugmani bosing:",
         "no_stores": "Yaqin atrofda do'konlar topilmadi.",
         "no_products": "{store} da mahsulotlar mavjud emas. Keyinroq urinib ko'ring yoki qo'llab-quvvatlash xizmatiga murojaat qiling.",
         "select_category": "Do'kon: {store}\nKategoriyani tanlang:",
