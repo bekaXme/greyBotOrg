@@ -378,8 +378,16 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+# States (e.g., RegisterState, OrderState, etc.)
+class AddPromoState(StatesGroup):
+    waiting_for_code = State()
+    waiting_for_discount_type = State()
+    waiting_for_discount_value = State()
+
+# Database setup (Replace the old setup_db here)
 def setup_db():
-    conn = get_db_connection()
+    conn = sqlite3.connect("store.db")
+    conn.row_factory = sqlite3.Row
     c = conn.cursor()
     
     c.execute("""
@@ -440,21 +448,6 @@ def setup_db():
         )
     """)
     
-    # Commenting out the cards table creation since we're disabling card functionality
-    """
-    c.execute(
-        CREATE TABLE IF NOT EXISTS cards (
-            user_id INTEGER,
-            card_number TEXT,
-            expiry_date TEXT,
-            cvc TEXT,
-            phone TEXT,
-            verified INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, card_number)
-        )
-    )
-    """
-    
     # Add missing columns if they don't exist
     try:
         c.execute("ALTER TABLE orders ADD COLUMN latitude REAL")
@@ -476,7 +469,20 @@ def setup_db():
         c.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN podyezd TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN floor TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN door_number TEXT")
+    except sqlite3.OperationalError:
+        pass
     
+    # Initial data insertion (unchanged)
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
               (1, 'ЦУМ', 41.3111, 69.2797))
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
@@ -491,6 +497,12 @@ def setup_db():
     
     conn.commit()
     conn.close()
+
+# Helper functions (e.g., get_db_connection, is_fully_registered, etc.)
+def get_db_connection():
+    conn = sqlite3.connect("store.db")
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # Helper functions
 def is_fully_registered(user_id):
@@ -1963,7 +1975,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
     try:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT delivery_time, status FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
+        c.execute("SELECT delivery_time, status, podyezd, floor, door_number FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
         order = c.fetchone()
         
         if order and order['status'] == 'pending' and order['delivery_time'] is None:
@@ -1982,7 +1994,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
                 age=age,
                 payment_method=payment_method,
                 delivery_time=default_delivery_time
-            )
+            ) + f"\nEntrance: {order['podyezd']}\nFloor: {order['floor']}\nDoor: {order['door_number']}"
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Rate Delivery", callback_data=f"rate_delivery:{order_id}")]
             ])
@@ -1995,7 +2007,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
         await state.clear()
     except Exception as e:
         logging.error(f"Error in auto_set_delivery_time for order {order_id}: {e}")
-
+        
 # Handlers
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
@@ -2845,14 +2857,81 @@ async def process_cash_payment(callback: types.CallbackQuery, state: FSMContext)
         age = user_data.get("age", "Not provided")
         latitude = user_data["latitude"]
         longitude = user_data["longitude"]
-        store = user_data["store"]
-        username = callback.from_user.username or "Not available"
         discount = user_data.get("discount", 0)
         promo_code = user_data.get("promo_code", None)
         lang = get_user_language(user_id)
 
-        if not cart or not user_id or not store:
-            raise ValueError("Required data missing in state (cart, user_id, or store)")
+        if not cart or not user_id:
+            raise ValueError("Required data missing in state (cart or user_id)")
+
+        await state.update_data(payment_method="Cash")
+        await callback.message.edit_text(LANGUAGES[lang]["enter_podyezd"])
+        await state.set_state(OrderState.waiting_for_podyezd)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in process_cash_payment: {e}")
+        await callback.message.edit_text("Something went wrong during payment processing. Please try again.")
+        await state.clear()
+
+@router.message(OrderState.waiting_for_podyezd)
+async def process_podyezd(message: Message, state: FSMContext):
+    try:
+        podyezd = message.text.strip()
+        if not podyezd:
+            lang = get_user_language(message.from_user.id)
+            await message.answer("Entrance number cannot be empty. Please enter it:")
+            return
+        
+        await state.update_data(podyezd=podyezd)
+        lang = get_user_language(message.from_user.id)
+        await message.answer(LANGUAGES[lang]["enter_floor"])
+        await state.set_state(OrderState.waiting_for_floor)
+    except Exception as e:
+        logging.error(f"Error in process_podyezd: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.message(OrderState.waiting_for_floor)
+async def process_floor(message: Message, state: FSMContext):
+    try:
+        floor = message.text.strip()
+        if not floor:
+            lang = get_user_language(message.from_user.id)
+            await message.answer("Floor number cannot be empty. Please enter it:")
+            return
+        
+        await state.update_data(floor=floor)
+        lang = get_user_language(message.from_user.id)
+        await message.answer(LANGUAGES[lang]["enter_door_number"])
+        await state.set_state(OrderState.waiting_for_door_number)
+    except Exception as e:
+        logging.error(f"Error in process_floor: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.message(OrderState.waiting_for_door_number)
+async def process_door_number(message: Message, state: FSMContext):
+    try:
+        door_number = message.text.strip()
+        if not door_number:
+            lang = get_user_language(message.from_user.id)
+            await message.answer("Door number cannot be empty. Please enter it:")
+            return
+        
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        user_id = user_data["user_id"]
+        age = user_data.get("age", "Not provided")
+        latitude = user_data["latitude"]
+        longitude = user_data["longitude"]
+        store = user_data["store"]
+        username = message.from_user.username or "Not available"
+        discount = user_data.get("discount", 0)
+        promo_code = user_data.get("promo_code", None)
+        payment_method = user_data["payment_method"]
+        podyezd = user_data["podyezd"]
+        floor = user_data["floor"]
+        lang = get_user_language(user_id)
 
         total_uzs = sum(item["price"] for item in cart)
         total_usd = convert_to_usd(total_uzs)
@@ -2861,8 +2940,8 @@ async def process_cash_payment(callback: types.CallbackQuery, state: FSMContext)
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(
-            "INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (user_id, cart_text, total_uzs, discount, promo_code, "Cash", age, latitude, longitude, "pending")
+            "INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude, podyezd, floor, door_number, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude, podyezd, floor, door_number, "pending")
         )
         order_id = c.lastrowid
         conn.commit()
@@ -2880,10 +2959,13 @@ async def process_cash_payment(callback: types.CallbackQuery, state: FSMContext)
             f"Total: {total_uzs} UZS ({total_usd} USD)\n"
             f"Discount: {discount} UZS\n"
             f"Final Total: {total_uzs - discount} UZS\n"
-            f"Payment: Cash\n"
+            f"Payment: {payment_method}\n"
+            f"Entrance: {podyezd}\n"
+            f"Floor: {floor}\n"
+            f"Door: {door_number}\n"
             f"Waiting for admin to set delivery time (20 seconds timeout)..."
         )
-        await callback.message.edit_text(user_message)
+        await message.answer(user_message)
 
         admin_message = (
             f"New Order #{order_id} from {user['name']}:\n"
@@ -2894,7 +2976,10 @@ async def process_cash_payment(callback: types.CallbackQuery, state: FSMContext)
             f"Discount: {discount} UZS (Promo: {promo_code or 'None'})\n"
             f"Final Total: {total_uzs - discount} UZS\n"
             f"Age: {age}\n"
-            f"Payment: Cash\n"
+            f"Payment: {payment_method}\n"
+            f"Entrance: {podyezd}\n"
+            f"Floor: {floor}\n"
+            f"Door: {door_number}\n"
             f"Please set delivery time within 20 seconds or default 35 minutes will be set."
         )
         for admin_id in ADMIN_ID:
@@ -2910,14 +2995,12 @@ async def process_cash_payment(callback: types.CallbackQuery, state: FSMContext)
             except Exception as e:
                 logging.error(f"Failed to notify admin {admin_id}: {e}")
 
-        asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs - discount, discount, promo_code, "Cash", age, state))
+        asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs - discount, discount, promo_code, payment_method, age, state))
         await state.set_state(OrderState.waiting_for_delivery_time)
-        await callback.answer()
     except Exception as e:
-        logging.error(f"Error in process_cash_payment: {e}")
-        await callback.message.edit_text("Something went wrong during payment processing. Please try again.")
+        logging.error(f"Error in process_door_number: {e}")
+        await message.answer("Something went wrong during order processing. Please try again.")
         await state.clear()
-
 # Temporarily commented out card payment handlers
 """
 @router.callback_query(F.data == "payment_card", OrderState.waiting_for_payment_method)
@@ -3446,54 +3529,70 @@ async def process_product_photo(message: Message, state: FSMContext):
         
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("INSERT INTO products (store, category, brand, name, price, description, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (data['store'], data['category'], data['brand'], data['name'], data['price'], data['description'], image_url))
+        c.execute(
+            "INSERT INTO products (store, category, brand, name, price, description, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (data['store'], data['category'], data['brand'], data['name'], data['price'], data['description'], image_url)
+        )
         conn.commit()
+        product_id = c.lastrowid  # Get the ID of the newly inserted product
         conn.close()
         
-        await message.answer(LANGUAGES["eng"]["product_added"].format(name=data['name']))
+        await message.answer(LANGUAGES["eng"]["product_added"].format(name=data['name']) + f" (ID: {product_id})")
+        logging.info(f"Product added: {data['name']} (ID: {product_id})")
         await state.clear()
     except Exception as e:
-        logging.error(f"Error in process_product_photo: {e}")
-        await message.answer("Something went wrong. Please try again.")
+        logging.error(f"Error adding product: {e}")
+        await message.answer(f"Failed to add product due to an error: {str(e)}. Please try again.")
         await state.clear()
-
+        
 @router.message(Command("view_products"))
 async def view_products_command(message: Message, state: FSMContext):
     if message.from_user.id not in ADMIN_ID:
         await message.answer(LANGUAGES["eng"]["admin_no_perm"])
         return
     
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, store, category, brand, name, price, description, image_url FROM products")
-    products = c.fetchall()
-    conn.close()
-    
-    if not products:
-        await message.answer(LANGUAGES["eng"]["no_products_admin"])
-        return
-    
-    for p in products:
-        response = (
-            f"{LANGUAGES['eng']['view_products']}\n"
-            f"ID: {p['id']}\n"
-            f"Store: {p['store']}\n"
-            f"Category: {p['category']}\n"
-            f"Brand: {p['brand']}\n"
-            f"Name: {p['name']}\n"
-            f"Price: {p['price']} UZS ({convert_to_usd(p['price'])} USD)\n"
-            f"Description: {p['description']}\n"
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=LANGUAGES["eng"]["edit_button"], callback_data=f"edit_product:{p['id']}"),
-             InlineKeyboardButton(text=LANGUAGES["eng"]["delete_button"], callback_data=f"delete_product:{p['id']}")]
-        ])
-        if p['image_url']:
-            await bot.send_photo(message.chat.id, p['image_url'], caption=response, reply_markup=keyboard)
-        else:
-            await message.answer(response, reply_markup=keyboard)
-
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, store, category, brand, name, price, description, image_url FROM products")
+        products = c.fetchall()
+        conn.close()
+        
+        if not products:
+            await message.answer(LANGUAGES["eng"]["no_products_admin"])
+            return
+        
+        response = LANGUAGES["eng"]["view_products"] + "\n\n"
+        for p in products:
+            product_info = (
+                f"ID: {p['id']}\n"
+                f"Store: {p['store']}\n"
+                f"Category: {p['category']}\n"
+                f"Brand: {p['brand']}\n"
+                f"Name: {p['name']}\n"
+                f"Price: {p['price']} UZS ({convert_to_usd(p['price'])} USD)\n"
+                f"Description: {p['description']}\n\n"
+            )
+            response += product_info
+            if len(response) > 3500:  # Telegram message length limit is ~4096 characters
+                await message.answer(response.strip())
+                response = ""
+        
+        if response.strip():
+            await message.answer(response.strip())
+        
+        # Send photos separately if they exist
+        for p in products:
+            if p['image_url']:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=LANGUAGES["eng"]["edit_button"], callback_data=f"edit_product:{p['id']}"),
+                     InlineKeyboardButton(text=LANGUAGES["eng"]["delete_button"], callback_data=f"delete_product:{p['id']}")]
+                ])
+                await bot.send_photo(message.chat.id, p['image_url'], caption=f"Product ID: {p['id']}", reply_markup=keyboard)
+    except Exception as e:
+        logging.error(f"Error in view_products_command: {e}")
+        await message.answer(f"Failed to retrieve products: {str(e)}")
+        
 @router.callback_query(F.data.startswith("edit_product:"))
 async def edit_product_callback(callback: types.CallbackQuery, state: FSMContext):
     try:
