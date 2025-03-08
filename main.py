@@ -478,9 +478,9 @@ def setup_db():
         pass
     
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
-              (1, 'Store 1', 41.291848, 69.211190))
+              (1, 'ЦУМ', 41.3111, 69.2797))
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
-              (2, 'Store 2', 41.008238, 28.978359))
+              (2, 'Sergeli', 41.2595, 69.2231))
     
     c.execute("SELECT COUNT(*) FROM products")
     if c.fetchone()[0] == 0:
