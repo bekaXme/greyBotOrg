@@ -1460,7 +1460,7 @@ from fastapi import FastAPI
 import geopy.distance
 
 # Configuration
-API_TOKEN = '7713134448:AAF8t-OZPCRfkYPC6PM0VGYyKXNDZytyZCM'
+API_TOKEN = '7751969567:AAGYlaG9NlwgoXDzVqS8qMDaFMpx0R7Vggo'
 ADMIN_ID = [5703082829, 2100140929]  # Replace with actual admin IDs
 PHONE_NUMBER = "+998910151402"
 EXCHANGE_RATE = 12700
@@ -2973,7 +2973,7 @@ async def process_card_number(message: Message, state: FSMContext):
 async def process_card_expiry(message: Message, state: FSMContext):
     expiry_date = message.text.strip()
     lang = get_user_language(message.from_user.id)
-    if not expiry_date or not expiry_date.match(r"^\d{2}/\d{2}$"):
+    if not expiry_date or not expiry_date.match(r"^\\d{2}/\\d{2}$"):
         await message.answer("Please enter a valid expiry date (MM/YY).")
         return
     await state.update_data(expiry_date=expiry_date)
@@ -2995,7 +2995,7 @@ async def process_card_cvc(message: Message, state: FSMContext):
 async def process_card_phone(message: Message, state: FSMContext):
     phone = message.text.strip()
     lang = get_user_language(message.from_user.id)
-    if not phone or not phone.match(r"^\+998\d{9}$"):
+    if not phone or not phone.match(r"^\\+998\\d{9}$"):
         await message.answer("Please enter a valid phone number in the format +998XXXXXXXXX.")
         return
     
