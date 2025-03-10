@@ -485,11 +485,16 @@ def setup_db():
     c.execute("SELECT COUNT(*) FROM products")
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
-                  ('Store 1', 'Electronics', 'Samsung', 'Galaxy S23', 12699999, 'Latest smartphone'))
+                  ('ЦУМ', 'Electronics', 'Samsung', 'Galaxy S23', 12699999, 'Latest smartphone'))
         c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
-                  ('Store 2', 'Clothing', 'Nike', 'Air Max', 1530350, 'Running shoes'))
-    
+                  ('Sergeli', 'Clothing', 'Nike', 'Air Max', 1530350, 'Running shoes'))
+        c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
+                  ('Sergeli', 'Electronics', 'Apple', 'iPhone 14', 13999999, 'Latest iPhone model'))
+        
     conn.commit()
+    c.execute("SELECT store, category, name FROM products WHERE store = 'Sergeli'")
+    products = c.fetchall()
+    print("Products for Sergeli after setup:", products)
     conn.close()
 
 # Helper functions
@@ -940,6 +945,7 @@ async def process_location(message: Message, state: FSMContext):
         await message.answer("Something went wrong while processing your location.", reply_markup=types.ReplyKeyboardRemove())
         await state.clear()
 
+
 @router.callback_query(F.data == "order_start", OrderState.selecting_action)
 async def start_ordering(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -959,6 +965,7 @@ async def start_ordering(callback: types.CallbackQuery, state: FSMContext):
         c = conn.cursor()
         c.execute("SELECT DISTINCT category FROM products WHERE store = ?", (store,))
         categories = c.fetchall()
+        logging.info(f"Store: {store}, Categories found: {[cat['category'] for cat in categories]}")
         conn.close()
         
         if not categories:
@@ -979,6 +986,40 @@ async def start_ordering(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
+@router.message(AddProductState.waiting_for_photo)
+async def process_product_photo(message: Message, state: FSMContext):
+    try:
+        lang = get_user_language(message.from_user.id)
+        user_data = await state.get_data()
+        
+        if message.text == "/skip":
+            image_url = None
+        elif message.photo:
+            photo = message.photo[-1]
+            file = await bot.get_file(photo.file_id)
+            image_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file.file_path}"
+        else:
+            await message.answer("Please send a photo or type /skip")
+            return
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO products (store, category, brand, name, price, description, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (user_data["store"], user_data["category"], user_data["brand"], 
+              user_data["name"], user_data["price"], user_data["description"], image_url))
+        conn.commit()
+        logging.info(f"Product added: {user_data['name']} to store {user_data['store']}, category {user_data['category']}")
+        conn.close()
+        
+        await message.answer(LANGUAGES[lang]["product_added"].format(name=user_data["name"]))
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Error in process_product_photo: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+        
 @router.callback_query(F.data == "back_to_action", OrderState.selecting_category)
 async def back_to_action_from_category(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -998,40 +1039,7 @@ async def back_to_action_from_category(callback: types.CallbackQuery, state: FSM
         logging.error(f"Error in back_to_action_from_category: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
-@router.message(AddProductState.waiting_for_photo)
-async def process_product_photo(message: Message, state: FSMContext):
-    try:
-        lang = get_user_language(message.from_user.id)
-        user_data = await state.get_data()
         
-        if message.text == "/skip":
-            image_url = None
-        elif message.photo:
-            photo = message.photo[-1]  # Get the highest quality photo
-            file = await bot.get_file(photo.file_id)
-            image_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file.file_path}"
-        else:
-            await message.answer("Please send a photo or type /skip")
-            return
-        
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO products (store, category, brand, name, price, description, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_data["store"], user_data["category"], user_data["brand"], 
-              user_data["name"], user_data["price"], user_data["description"], image_url))
-        conn.commit()
-        conn.close()
-        
-        await message.answer(LANGUAGES[lang]["product_added"].format(name=user_data["name"]))
-        await state.clear()
-    except Exception as e:
-        logging.error(f"Error in process_product_photo: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
-
 @router.callback_query(F.data == "back_to_main", OrderState.selecting_action)
 async def back_to_main_from_action(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1739,6 +1747,7 @@ async def add_product_command(message: Message, state: FSMContext):
 async def select_store(callback: types.CallbackQuery, state: FSMContext):
     try:
         store = callback.data.split(":")[1]
+        logging.info(f"Selected store for adding product: {store}")
         lang = get_user_language(callback.from_user.id)
         await state.update_data(store=store)
         await callback.message.edit_text(LANGUAGES[lang]["enter_category"])
