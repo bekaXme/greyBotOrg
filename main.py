@@ -15,6 +15,8 @@ from aiogram.filters import Command
 from aiogram import F
 import geopy.distance
 
+logging.basicConfig(level=logging.DEBUG)
+
 # Configuration
 logging.basicConfig(level=logging.DEBUG)
 API_TOKEN = '7713134448:AAF8t-OZPCRfkYPC6PM0VGYyKXNDZytyZCM'
@@ -343,9 +345,12 @@ def get_db_connection():
 def setup_db():
     conn = get_db_connection()
     c = conn.cursor()
-    logging.debug("Setting up database...")
-
-    # Create tables
+    logging.info("Setting up database...")
+    # ... (rest of the function)
+    conn.commit()
+    logging.info("Database setup completed.")
+    conn.close()
+    
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -407,23 +412,44 @@ def setup_db():
             discount_value REAL
         )
     """)
-    logging.debug("Promo_codes table created or already exists.")
-
-    # Add missing columns
-    for column_sql in [
-        "ALTER TABLE orders ADD COLUMN latitude REAL",
-        "ALTER TABLE orders ADD COLUMN longitude REAL",
-        "ALTER TABLE orders ADD COLUMN discount REAL DEFAULT 0",
-        "ALTER TABLE orders ADD COLUMN promo_code TEXT",
-        "ALTER TABLE orders ADD COLUMN payment_method TEXT"
-    ]:
-        try:
-            c.execute(column_sql)
-            logging.debug(f"Added column: {column_sql}")
-        except sqlite3.OperationalError:
-            logging.debug(f"Column already exists: {column_sql}")
-
-    # Insert default stores
+    
+    # Commenting out the cards table creation since we're disabling card functionality
+    """
+    c.execute(
+        CREATE TABLE IF NOT EXISTS cards (
+            user_id INTEGER,
+            card_number TEXT,
+            expiry_date TEXT,
+            cvc TEXT,
+            phone TEXT,
+            verified INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, card_number)
+        )
+    )
+    """
+    
+    # Add missing columns if they don't exist
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN latitude REAL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN longitude REAL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN discount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN promo_code TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
               (1, 'ЦУМ', 41.3111, 69.2797))
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
@@ -439,10 +465,11 @@ def setup_db():
                   ('Sergeli', 'Clothing', 'Nike', 'Air Max', 1530350, 'Running shoes'))
         c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
                   ('Sergeli', 'Electronics', 'Apple', 'iPhone 14', 13999999, 'Latest iPhone model'))
-        logging.debug("Default products inserted.")
-
+        
     conn.commit()
-    logging.debug("Database changes committed.")
+    c.execute("SELECT store, category, name FROM products WHERE store = 'Sergeli'")
+    products = c.fetchall()
+    print("Products for Sergeli after setup:", products)
     conn.close()
     logging.debug("Database setup completed.")
 
@@ -546,7 +573,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Rate Delivery", callback_data=f"rate_delivery:{order_id}")]
             ])
-            await bot.send_message(user_id, f"Admin didn’t respond in time. Default delivery time set to 35 minutes.\n{order_message}", reply_markup=keyboard)
+            await bot.send_message(user_id, f"Admin didn't respond in time. Default delivery time set to 35 minutes.\n{order_message}", reply_markup=keyboard)
             for admin_id in ADMIN_ID:
                 await bot.send_message(admin_id, f"Order #{order_id} auto-confirmed with 35-minute delivery due to no response.")
             logging.info(f"Order #{order_id} auto-confirmed with 35-minute delivery.")
@@ -587,7 +614,7 @@ async def process_language(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(RegisterState.waiting_for_name)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in process_language: {e}")
+        log_exception(e, "process_language")
         await callback.message.edit_text("Error occurred. Please try /start again.")
         await state.clear()
 
@@ -1969,6 +1996,9 @@ async def process_discount_value(message: Message, state: FSMContext):
 async def main():
     setup_db()
     await dp.start_polling(bot)
+
+def log_exception(e: Exception, context: str):
+    logger.error(f"Error in {context}: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
