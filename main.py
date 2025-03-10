@@ -2,7 +2,6 @@ import logging
 import sqlite3
 import asyncio
 import random
-import requests
 from datetime import datetime
 import pytz
 from aiogram import Bot, Dispatcher, types, Router
@@ -14,34 +13,27 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from aiogram import F
-from fastapi import FastAPI
 import geopy.distance
 
-logging.basicConfig(level=logging.DEBUG)
-
 # Configuration
+logging.basicConfig(level=logging.DEBUG)
 API_TOKEN = '7713134448:AAF8t-OZPCRfkYPC6PM0VGYyKXNDZytyZCM'
-ADMIN_ID = [5703082829, 2100140929]  # Replace with actual admin IDs
+ADMIN_ID = [5703082829, 2100140929]
 PHONE_NUMBER = "+998910151402"
 EXCHANGE_RATE = 12700
 RESTRICTED_CATEGORIES = ["Sigarette", "Cigarettes", "Tobacco"]
 SUPPORT_USERNAME = "@bekaXme"
-PAYCOM_MERCHANT_ID = "371317599:TEST:1740663904243"  # Paycom test merchant ID
-logging.basicConfig(level=logging.INFO)
+UZBEKISTAN_TZ = pytz.timezone("Asia/Tashkent")
+WORKING_HOURS_START = 8  # 8:00 AM
+WORKING_HOURS_END = 24   # 12:00 AM (midnight)
 
 # Bot initialization
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
-app = FastAPI()
 
-# Working hours in Uzbekistan time (UTC+5)
-UZBEKISTAN_TZ = pytz.timezone("Asia/Tashkent")
-WORKING_HOURS_START = 8  # 8:00 AM
-WORKING_HOURS_END = 24   # 12:00 AM (midnight)
-
-# Language dictionaries
+# Language dictionaries (unchanged)
 LANGUAGES = {
     "uzb": {
         "enter_name": "Iltimos, ismingizni kiriting:",
@@ -124,16 +116,7 @@ LANGUAGES = {
         "select_payment": "To'lov usulini tanlang:",
         "pay_cash": "Naqd",
         "pay_card": "Karta orqali",
-        "enter_card_number": "Karta raqamingizni kiriting (XXXX XXXX XXXX XXXX):",
-        "enter_card_expiry": "Karta amal qilish muddatini kiriting (MM/YY):",
-        "enter_card_cvc": "Karta CVC kodini kiriting (3 raqam):",
-        "enter_card_phone": "Karta bilan bog'liq telefon raqamini kiriting (+998XXXXXXXXX):",
-        "card_verification_code": "Karta tasdiqlash kodi SMS orqali yuborildi. Kodni kiriting:",
-        "card_verification_failed": "Tasdiqlash kodi noto'g'ri. Qaytadan urinib ko'ring.",
-        "card_added": "Karta muvaffaqiyatli qo'shildi!",
-        "card_failed": "Karta qo'shishda xatolik yuz berdi. Qaytadan urinib ko'ring.",
-        "payment_success": "To'lov muvaffaqiyatli amalga oshirildi!",
-        "payment_failed": "To'lov amalga oshmadi. Iltimos, qaytadan urinib ko'ring.",
+        "cancel_button": "Bekor qilish",
     },
     "eng": {
         "enter_name": "Please enter your name:",
@@ -216,16 +199,7 @@ LANGUAGES = {
         "select_payment": "Select payment method:",
         "pay_cash": "Cash",
         "pay_card": "By Card",
-        "enter_card_number": "Enter your card number (XXXX XXXX XXXX XXXX):",
-        "enter_card_expiry": "Enter card expiry date (MM/YY):",
-        "enter_card_cvc": "Enter card CVC code (3 digits):",
-        "enter_card_phone": "Enter phone number linked to the card (+998XXXXXXXXX):",
-        "card_verification_code": "A verification code has been sent to your phone. Enter the code:",
-        "card_verification_failed": "Verification code is incorrect. Please try again.",
-        "card_added": "Card added successfully!",
-        "card_failed": "Failed to add card. Please try again.",
-        "payment_success": "Payment successful!",
-        "payment_failed": "Payment failed. Please try again.",
+        "cancel_button": "Cancel",
     },
     "rus": {
         "enter_name": "Пожалуйста, введите ваше имя:",
@@ -308,16 +282,7 @@ LANGUAGES = {
         "select_payment": "Выберите способ оплаты:",
         "pay_cash": "Наличными",
         "pay_card": "Картой",
-        "enter_card_number": "Введите номер карты (XXXX XXXX XXXX XXXX):",
-        "enter_card_expiry": "Введите срок действия карты (MM/YY):",
-        "enter_card_cvc": "Введите CVC код карты (3 цифры):",
-        "enter_card_phone": "Введите номер телефона, связанный с картой (+998XXXXXXXXX):",
-        "card_verification_code": "Код подтверждения отправлен на ваш телефон. Введите код:",
-        "card_verification_failed": "Код подтверждения неверный. Попробуйте снова.",
-        "card_added": "Карта успешно добавлена!",
-        "card_failed": "Ошибка при добавлении карты. Попробуйте снова.",
-        "payment_success": "Оплата успешно выполнена!",
-        "payment_failed": "Оплата не удалась. Попробуйте снова.",
+        "cancel_button": "Отменить",
     }
 }
 
@@ -338,11 +303,6 @@ class OrderState(StatesGroup):
     cart_management = State()
     waiting_for_promo = State()
     waiting_for_payment_method = State()
-    # waiting_for_card_number = State()
-    # waiting_for_card_expiry = State()
-    # waiting_for_card_cvc = State()
-    # waiting_for_card_phone = State()
-    # waiting_for_verification_code = State()
     waiting_for_delivery_time = State()
     waiting_for_feedback = State()
 
@@ -354,7 +314,7 @@ class AddProductState(StatesGroup):
     waiting_for_product_price = State()
     waiting_for_product_description = State()
     waiting_for_photo = State()
-    
+
 class EditProductState(StatesGroup):
     waiting_for_product_id = State()
     waiting_for_field = State()
@@ -383,12 +343,9 @@ def get_db_connection():
 def setup_db():
     conn = get_db_connection()
     c = conn.cursor()
-    logging.info("Setting up database...")
-    # ... (rest of the function)
-    conn.commit()
-    logging.info("Database setup completed.")
-    conn.close()
-    
+    logging.debug("Setting up database...")
+
+    # Create tables
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -399,7 +356,8 @@ def setup_db():
             language TEXT DEFAULT 'uzb'
         )
     """)
-    
+    logging.debug("Users table created or already exists.")
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS stores (
             id INTEGER PRIMARY KEY,
@@ -408,7 +366,8 @@ def setup_db():
             longitude REAL
         )
     """)
-    
+    logging.debug("Stores table created or already exists.")
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,7 +380,8 @@ def setup_db():
             image_url TEXT
         )
     """)
-    
+    logging.debug("Products table created or already exists.")
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -438,57 +398,39 @@ def setup_db():
             status TEXT DEFAULT 'pending'
         )
     """)
-    
+    logging.debug("Orders table created or already exists.")
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS promo_codes (
             code TEXT PRIMARY KEY,
-            discount_type TEXT,  -- 'fixed' or 'percent'
+            discount_type TEXT,
             discount_value REAL
         )
     """)
-    
-    # Commenting out the cards table creation since we're disabling card functionality
-    """
-    c.execute(
-        CREATE TABLE IF NOT EXISTS cards (
-            user_id INTEGER,
-            card_number TEXT,
-            expiry_date TEXT,
-            cvc TEXT,
-            phone TEXT,
-            verified INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, card_number)
-        )
-    )
-    """
-    
-    # Add missing columns if they don't exist
-    try:
-        c.execute("ALTER TABLE orders ADD COLUMN latitude REAL")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE orders ADD COLUMN longitude REAL")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE orders ADD COLUMN discount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE orders ADD COLUMN promo_code TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT")
-    except sqlite3.OperationalError:
-        pass
-    
+    logging.debug("Promo_codes table created or already exists.")
+
+    # Add missing columns
+    for column_sql in [
+        "ALTER TABLE orders ADD COLUMN latitude REAL",
+        "ALTER TABLE orders ADD COLUMN longitude REAL",
+        "ALTER TABLE orders ADD COLUMN discount REAL DEFAULT 0",
+        "ALTER TABLE orders ADD COLUMN promo_code TEXT",
+        "ALTER TABLE orders ADD COLUMN payment_method TEXT"
+    ]:
+        try:
+            c.execute(column_sql)
+            logging.debug(f"Added column: {column_sql}")
+        except sqlite3.OperationalError:
+            logging.debug(f"Column already exists: {column_sql}")
+
+    # Insert default stores
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
               (1, 'ЦУМ', 41.3111, 69.2797))
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
               (2, 'Sergeli', 41.2595, 69.2231))
-    
+    logging.debug("Default stores inserted or already present.")
+
+    # Insert default products if none exist
     c.execute("SELECT COUNT(*) FROM products")
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
@@ -497,12 +439,12 @@ def setup_db():
                   ('Sergeli', 'Clothing', 'Nike', 'Air Max', 1530350, 'Running shoes'))
         c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
                   ('Sergeli', 'Electronics', 'Apple', 'iPhone 14', 13999999, 'Latest iPhone model'))
-        
+        logging.debug("Default products inserted.")
+
     conn.commit()
-    c.execute("SELECT store, category, name FROM products WHERE store = 'Sergeli'")
-    products = c.fetchall()
-    print("Products for Sergeli after setup:", products)
+    logging.debug("Database changes committed.")
     conn.close()
+    logging.debug("Database setup completed.")
 
 # Helper functions
 def is_fully_registered(user_id):
@@ -576,36 +518,8 @@ def calculate_discount(total_uzs, promo_code):
         return round(total_uzs * (discount_value / 100))
     return 0
 
-# Commented out helper functions related to card verification and payment
-"""
-def generate_verification_code():
-    return str(random.randint(1000, 9999))
-
-def send_verification_sms(phone, code):
-    # Placeholder for SMS sending logic
-    logging.info(f"Sending SMS to {phone}: Verification code is {code}")
-    return True
-
-def process_payment_paycom(amount, card_details):
-    # Placeholder for Paycom payment processing
-    try:
-        payload = {
-            "merchant_id": PAYCOM_MERCHANT_ID,
-            "amount": int(amount),
-            "card_number": card_details['card_number'].replace(" ", ""),
-            "expiry_date": card_details['expiry_date'],
-            "cvc": card_details['cvc'],
-        }
-        response = {"status": "success"}  # Simulated response
-        logging.info(f"Simulated Paycom API response: {response}")
-        return response.get("status") == "success"
-    except Exception as e:
-        logging.error(f"Paycom payment error: {e}")
-        return False
-"""
-
 async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, total_uzs: float, discount: float, promo_code: str, payment_method: str, age: str, state: FSMContext):
-    await asyncio.sleep(20)  # Wait 20 seconds
+    await asyncio.sleep(20)
     try:
         conn = get_db_connection()
         c = conn.cursor()
@@ -709,7 +623,7 @@ async def get_phone(message: Message, state: FSMContext):
     conn.close()
     
     await message.answer(LANGUAGES[lang]["reg_complete"].format(name=data["name"], phone=message.contact.phone_number),
-                     reply_markup=types.ReplyKeyboardRemove())
+                         reply_markup=types.ReplyKeyboardRemove())
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=LANGUAGES[lang]["order_button"], callback_data="start_ordering"),
          InlineKeyboardButton(text=LANGUAGES[lang]["settings_button"], callback_data="settings")],
@@ -952,39 +866,43 @@ async def process_location(message: Message, state: FSMContext):
         await message.answer("Something went wrong while processing your location.", reply_markup=types.ReplyKeyboardRemove())
         await state.clear()
 
-
 @router.callback_query(F.data == "order_start", OrderState.selecting_action)
 async def start_ordering(callback: types.CallbackQuery, state: FSMContext):
-    user_data = await state.get_data()
-    store = user_data.get("store")
-    lang = get_user_language(callback.from_user.id)
-    
-    if not store:
-        await callback.message.edit_text("Store not found. Please restart with /order.")
-        await state.clear()
-        return
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT DISTINCT category FROM products WHERE store = ?", (store,))
-    categories = c.fetchall()
-    conn.close()
-    
-    logging.debug(f"Categories for {store}: {[cat['category'] for cat in categories]}")
-    if not categories:
-        await callback.message.edit_text(LANGUAGES[lang]["no_products"].format(store=store))
-        await state.clear()
-        return
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=cat['category'], callback_data=f"cat:{store}:{cat['category']}")]
-        for cat in categories
-    ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_action")]])
-    
-    await callback.message.edit_text(LANGUAGES[lang]["select_category"].format(store=store), reply_markup=keyboard)
-    await state.set_state(OrderState.selecting_category)
-    await callback.answer()
+    try:
+        user_data = await state.get_data()
+        store = user_data.get("store")
+        lang = get_user_language(callback.from_user.id)
         
+        if not store:
+            await callback.message.edit_text("Store not found. Please restart with /order.")
+            await state.clear()
+            return
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT category FROM products WHERE store = ?", (store,))
+        categories = c.fetchall()
+        conn.close()
+        
+        logging.debug(f"Categories for {store}: {[cat['category'] for cat in categories]}")
+        if not categories:
+            await callback.message.edit_text(LANGUAGES[lang]["no_products"].format(store=store))
+            await state.clear()
+            return
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=cat['category'], callback_data=f"cat:{store}:{cat['category']}")]
+            for cat in categories
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_action")]])
+        
+        await callback.message.edit_text(LANGUAGES[lang]["select_category"].format(store=store), reply_markup=keyboard)
+        await state.set_state(OrderState.selecting_category)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in start_ordering: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.callback_query(F.data == "back_to_action", OrderState.selecting_category)
 async def back_to_action_from_category(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1004,7 +922,7 @@ async def back_to_action_from_category(callback: types.CallbackQuery, state: FSM
         logging.error(f"Error in back_to_action_from_category: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-        
+
 @router.callback_query(F.data == "back_to_main", OrderState.selecting_action)
 async def back_to_main_from_action(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1024,37 +942,42 @@ async def back_to_main_from_action(callback: types.CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data.startswith("cat:"), OrderState.selecting_category)
 async def process_category(callback: types.CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":")
-    store, category = parts[1], parts[2]
-    lang = get_user_language(callback.from_user.id)
-    
-    if category in RESTRICTED_CATEGORIES:
-        await callback.message.edit_text(LANGUAGES[lang]["enter_age"])
-        await state.update_data(store=store, category=category)
-        await state.set_state(OrderState.waiting_for_age)
-    else:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT DISTINCT brand FROM products WHERE store = ? AND category = ?", (store, category))
-        brands = c.fetchall()
-        conn.close()
+    try:
+        parts = callback.data.split(":")
+        store, category = parts[1], parts[2]
+        lang = get_user_language(callback.from_user.id)
         
-        logging.debug(f"Brands for {store}/{category}: {[b['brand'] for b in brands]}")
-        if not brands:
-            await callback.message.edit_text(LANGUAGES[lang]["no_brands"].format(category=category, store=store))
-            await state.clear()
-            return
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=brand['brand'], callback_data=f"brand:{store}:{category}:{brand['brand']}")]
-            for brand in brands
-        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
-        
-        await callback.message.edit_text(LANGUAGES[lang]["select_brand"].format(category=category), reply_markup=keyboard)
-        await state.update_data(category=category)
-        await state.set_state(OrderState.selecting_brand)
-    await callback.answer()
-    
+        if category in RESTRICTED_CATEGORIES:
+            await callback.message.edit_text(LANGUAGES[lang]["enter_age"])
+            await state.update_data(store=store, category=category)
+            await state.set_state(OrderState.waiting_for_age)
+        else:
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT brand FROM products WHERE store = ? AND category = ?", (store, category))
+            brands = c.fetchall()
+            conn.close()
+            
+            logging.debug(f"Brands for {store}/{category}: {[b['brand'] for b in brands]}")
+            if not brands:
+                await callback.message.edit_text(LANGUAGES[lang]["no_brands"].format(category=category, store=store))
+                await state.clear()
+                return
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=brand['brand'], callback_data=f"brand:{store}:{category}:{brand['brand']}")]
+                for brand in brands
+            ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
+            
+            await callback.message.edit_text(LANGUAGES[lang]["select_brand"].format(category=category), reply_markup=keyboard)
+            await state.update_data(category=category)
+            await state.set_state(OrderState.selecting_brand)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in process_category: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.callback_query(F.data == "back_to_category", OrderState.selecting_brand)
 async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1127,41 +1050,71 @@ async def process_age(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("brand:"), OrderState.selecting_brand)
 async def process_brand(callback: types.CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":")
-    store, category, brand = parts[1], parts[2], parts[3]
-    lang = get_user_language(callback.from_user.id)
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, name, price, description, image_url FROM products WHERE store = ? AND category = ? AND brand = ?", 
-              (store, category, brand))
-    products = c.fetchall()
-    conn.close()
-    
-    logging.debug(f"Products for {store}/{category}/{brand}: {[dict(p) for p in products]}")
-    if not products:
-        await callback.message.edit_text(LANGUAGES[lang]["no_products_brand"].format(store=store, category=category, brand=brand))
+    try:
+        parts = callback.data.split(":")
+        store, category, brand = parts[1], parts[2], parts[3]
+        lang = get_user_language(callback.from_user.id)
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, name, price, description, image_url FROM products WHERE store = ? AND category = ? AND brand = ?", 
+                  (store, category, brand))
+        products = c.fetchall()
+        conn.close()
+        
+        logging.debug(f"Products for {store}/{category}/{brand}: {[dict(p) for p in products]}")
+        if not products:
+            await callback.message.edit_text(LANGUAGES[lang]["no_products_brand"].format(store=store, category=category, brand=brand))
+            await state.clear()
+            return
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"{p['name']} - {p['price']} UZS", callback_data=f"prod:{store}:{category}:{brand}:{p['id']}")]
+            for p in products
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
+        
+        await callback.message.edit_text(LANGUAGES[lang]["select_product"].format(brand=brand), reply_markup=keyboard)
+        await state.update_data(brand=brand)
+        await state.set_state(OrderState.selecting_product)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in process_brand: {e}")
+                await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-        return
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{p['name']} - {p['price']} UZS", callback_data=f"prod:{store}:{category}:{brand}:{p['id']}")]
-        for p in products
-    ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
-    
-    await callback.message.edit_text(LANGUAGES[lang]["select_product"].format(brand=brand), reply_markup=keyboard)
-    await state.update_data(brand=brand)
-    await state.set_state(OrderState.selecting_product)
-    await callback.answer()
-    
+
+@router.callback_query(F.data == "back_to_category", OrderState.selecting_product)
+async def back_to_category_from_product(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        user_data = await state.get_data()
+        store = user_data.get("store")
+        if not store:
+            raise ValueError("Store not found in state data")
+        lang = get_user_language(callback.from_user.id)
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT category FROM products WHERE store = ?", (store,))
+        categories = c.fetchall()
+        conn.close()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=cat['category'], callback_data=f"cat:{store}:{cat['category']}")]
+            for cat in categories
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_action")]])
+        
+        await callback.message.edit_text(LANGUAGES[lang]["select_category"].format(store=store), reply_markup=keyboard)
+        await state.set_state(OrderState.selecting_category)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in back_to_category_from_product: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.callback_query(F.data.startswith("prod:"), OrderState.selecting_product)
 async def process_product(callback: types.CallbackQuery, state: FSMContext):
     try:
         parts = callback.data.split(":")
-        if len(parts) != 5:
-            raise ValueError("Invalid callback data format")
-        _, store, category, brand, product_id = parts
-        product_id = int(product_id)
+        store, category, brand, product_id = parts[1], parts[2], parts[3], parts[4]
         lang = get_user_language(callback.from_user.id)
         
         conn = get_db_connection()
@@ -1175,28 +1128,27 @@ async def process_product(callback: types.CallbackQuery, state: FSMContext):
             await state.clear()
             return
         
-        cart_item = {"id": product_id, "name": product["name"], "price": product["price"]}
         user_data = await state.get_data()
         cart = user_data.get("cart", [])
-        cart.append(cart_item)
+        cart.append({"id": product_id, "name": product["name"], "price": product["price"], "quantity": 1})
         await state.update_data(cart=cart)
         
+        price_usd = convert_to_usd(product["price"])
         message_text = LANGUAGES[lang]["added_to_cart"].format(
-            name=product["name"],
-            price_uzs=product["price"],
-            price_usd=convert_to_usd(product["price"]),
-            description=product["description"]
+            name=product["name"], price_uzs=product["price"], price_usd=price_usd, description=product["description"]
         )
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
-            [InlineKeyboardButton(text="🚀 Checkout", callback_data="checkout")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_brand")]
+            [InlineKeyboardButton(text="🛒 View Cart", callback_data="view_cart")],
+            [InlineKeyboardButton(text="➕ Add More", callback_data=f"back_to_brand:{store}:{category}:{brand}")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]
         ])
+        
         if product["image_url"]:
-            await callback.message.delete()
-            await bot.send_photo(callback.from_user.id, product["image_url"], caption=message_text, reply_markup=keyboard)
+            await bot.send_photo(callback.from_user.id, photo=product["image_url"], caption=message_text, reply_markup=keyboard)
         else:
             await callback.message.edit_text(message_text, reply_markup=keyboard)
+        
         await state.set_state(OrderState.cart_management)
         await callback.answer()
     except Exception as e:
@@ -1204,33 +1156,11 @@ async def process_product(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
-@router.callback_query(F.data == "back_to_brand", OrderState.selecting_product)
+@router.callback_query(F.data.startswith("back_to_brand:"), OrderState.cart_management)
 async def back_to_brand(callback: types.CallbackQuery, state: FSMContext):
     try:
-        user_data = await state.get_data()
-        store = user_data.get("store")
-        category = user_data.get("category")
-        brand = user_data.get("brand")
-        if not all([store, category, brand]):
-            lang = get_user_language(callback.from_user.id)
-            await callback.message.edit_text("Session data lost. Please start over.")
-            await back_to_main_from_action(callback, state)  # Redirect to main menu
-            return
-        # Rest of the existing logic...
-    except Exception as e:
-        logging.error(f"Error in back_to_brand: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
-        await state.clear()
-        
-@router.callback_query(F.data == "back_to_product", OrderState.cart_management)
-async def back_to_product(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        user_data = await state.get_data()
-        store = user_data.get("store")
-        category = user_data.get("category")
-        brand = user_data.get("brand")
-        if not all([store, category, brand]):
-            raise ValueError("Store, category, or brand not found in state data")
+        parts = callback.data.split(":")
+        store, category, brand = parts[1], parts[2], parts[3]
         lang = get_user_language(callback.from_user.id)
         
         conn = get_db_connection()
@@ -1240,23 +1170,63 @@ async def back_to_product(callback: types.CallbackQuery, state: FSMContext):
         products = c.fetchall()
         conn.close()
         
+        if not products:
+            await callback.message.edit_text(LANGUAGES[lang]["no_products_brand"].format(store=store, category=category, brand=brand))
+            await state.clear()
+            return
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"{p['name']} - {p['price']} UZS", callback_data=f"prod:{store}:{category}:{brand}:{p['id']}")]
             for p in products
-        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_brand")]])
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
         
         await callback.message.edit_text(LANGUAGES[lang]["select_product"].format(brand=brand), reply_markup=keyboard)
         await state.set_state(OrderState.selecting_product)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in back_to_product: {e}")
+        logging.error(f"Error in back_to_brand: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
-@router.callback_query(F.data.startswith("more:"), OrderState.cart_management)
-async def continue_shopping(callback: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "view_cart", OrderState.cart_management)
+async def view_cart(callback: types.CallbackQuery, state: FSMContext):
     try:
-        store = callback.data.split(":")[1]
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        lang = get_user_language(callback.from_user.id)
+        
+        if not cart:
+            await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
+            await state.clear()
+            return
+        
+        cart_text = "\n".join([f"{item['name']} - {item['price']} UZS x {item['quantity']}" for item in cart])
+        total_uzs = sum(item["price"] * item["quantity"] for item in cart)
+        total_usd = convert_to_usd(total_uzs)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Checkout", callback_data="checkout")],
+            [InlineKeyboardButton(text="➕ Add More", callback_data="back_to_category_from_cart")],
+            [InlineKeyboardButton(text="🗑️ Clear Cart", callback_data="clear_cart")]
+        ])
+        
+        await callback.message.edit_text(
+            f"Your Cart:\n{cart_text}\n\nTotal: {total_uzs} UZS ({total_usd} USD)",
+            reply_markup=keyboard
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in view_cart: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.callback_query(F.data == "back_to_category_from_cart", OrderState.cart_management)
+async def back_to_category_from_cart(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        user_data = await state.get_data()
+        store = user_data.get("store")
+        if not store:
+            raise ValueError("Store not found in state data")
         lang = get_user_language(callback.from_user.id)
         
         conn = get_db_connection()
@@ -1265,210 +1235,59 @@ async def continue_shopping(callback: types.CallbackQuery, state: FSMContext):
         categories = c.fetchall()
         conn.close()
         
-        if not categories:
-            await callback.message.edit_text(LANGUAGES[lang]["no_categories"].format(store=store))
-            await state.clear()
-            return
-        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=cat['category'], callback_data=f"cat:{store}:{cat['category']}")]
             for cat in categories
-        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]])
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="view_cart")]])
         
         await callback.message.edit_text(LANGUAGES[lang]["select_category"].format(store=store), reply_markup=keyboard)
         await state.set_state(OrderState.selecting_category)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in continue_shopping: {e}")
+        logging.error(f"Error in back_to_category_from_cart: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
-@router.callback_query(F.data == "back_to_cart", OrderState.selecting_category)
-async def back_to_cart(callback: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "clear_cart", OrderState.cart_management)
+async def clear_cart(callback: types.CallbackQuery, state: FSMContext):
     try:
-        user_data = await state.get_data()
-        cart = user_data.get("cart", [])
-        store = user_data.get("store")
-        discount = user_data.get("discount", 0)
-        if not store:
-            raise ValueError("Store not found in state data")
+        await state.update_data(cart=[])
         lang = get_user_language(callback.from_user.id)
-        
-        if not cart:
-            await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
-            await state.clear()
-            return
-        
-        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-        total_uzs = sum(item["price"] for item in cart)
-        final_total = total_uzs - discount
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
-            [InlineKeyboardButton(text="🚀 Checkout", callback_data="checkout")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
+            [InlineKeyboardButton(text=LANGUAGES[lang]["order_button"], callback_data="order_start")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_main")]
         ])
-        await callback.message.edit_text(
-            f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {final_total} UZS",
-            reply_markup=keyboard
-        )
-        await state.set_state(OrderState.cart_management)
+        await callback.message.edit_text("Cart cleared!", reply_markup=keyboard)
+        await state.set_state(OrderState.selecting_action)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in back_to_cart: {e}")
+        logging.error(f"Error in clear_cart: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
-        await state.clear()
-
-@router.callback_query(F.data == "apply_promo", OrderState.cart_management)
-async def apply_promo_prompt(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        lang = get_user_language(callback.from_user.id)
-        await callback.message.edit_text(LANGUAGES[lang]["enter_promo"])
-        await state.set_state(OrderState.waiting_for_promo)
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Error in apply_promo_prompt: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
-        await state.clear()
-
-@router.message(OrderState.waiting_for_promo)
-async def process_promo_code(message: Message, state: FSMContext):
-    try:
-        promo_code = message.text.strip()
-        user_data = await state.get_data()
-        cart = user_data.get("cart", [])
-        store = user_data.get("store")
-        lang = get_user_language(message.from_user.id)
-
-        if not cart:
-            await message.answer(LANGUAGES[lang]["cart_empty"])
-            await state.clear()
-            return
-
-        total_uzs = sum(item["price"] for item in cart)
-        discount = calculate_discount(total_uzs, promo_code)
-
-        if discount == 0:
-            await message.answer(LANGUAGES[lang]["promo_invalid"])
-            cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
-                [InlineKeyboardButton(text="🚀 Checkout", callback_data="checkout")],
-                [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
-                [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
-            ])
-            await message.answer(f"Cart:\n{cart_text}", reply_markup=keyboard)
-            await state.set_state(OrderState.cart_management)
-            return
-
-        await state.update_data(promo_code=promo_code, discount=discount)
-        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-        total_uzs = sum(item["price"] for item in cart)
-        final_total = total_uzs - discount
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Add more", callback_data=f"more:{store}")],
-            [InlineKeyboardButton(text="🚀 Checkout", callback_data="checkout")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_product")]
-        ])
-        await message.answer(LANGUAGES[lang]["promo_applied"].format(discount=discount))
-        await message.answer(f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {final_total} UZS", reply_markup=keyboard)
-        await state.set_state(OrderState.cart_management)
-    except Exception as e:
-        logging.error(f"Error in process_promo_code: {e}")
-        await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
 @router.callback_query(F.data == "checkout", OrderState.cart_management)
 async def checkout(callback: types.CallbackQuery, state: FSMContext):
     try:
-        if not is_within_working_hours():
-            lang = get_user_language(callback.from_user.id)
-            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
-            await callback.answer()
-            return
-
         user_data = await state.get_data()
         cart = user_data.get("cart", [])
-        store = user_data.get("store")
-        discount = user_data.get("discount", 0)
-
-        if not cart:
-            lang = get_user_language(callback.from_user.id)
-            await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
-            await state.clear()
-            return
-
         lang = get_user_language(callback.from_user.id)
-        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-        total_uzs = sum(item["price"] for item in cart)
-        final_total = total_uzs - discount
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Proceed to Payment", callback_data="select_payment")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]
-        ])
-
-        await callback.message.edit_text(
-            f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {final_total} UZS",
-            reply_markup=keyboard
-        )
-
-        await state.set_state(OrderState.cart_management)
-        await callback.answer()
-
-    except Exception as e:
-        logging.error(f"Error in checkout: {e}", exc_info=True)
-        lang = get_user_language(callback.from_user.id)
-        await callback.message.edit_text("An error occurred during checkout. Please try again.")
-        await state.clear()
-
-@router.callback_query(F.data == "select_payment", OrderState.cart_management)
-async def select_payment_method(callback: types.CallbackQuery, state: FSMContext):
-    lang = get_user_language(callback.from_user.id)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=LANGUAGES[lang]["pay_cash"], callback_data="payment:cash")],
-        # Remove or comment out card option until implemented
-        #[InlineKeyboardButton(text=LANGUAGES[lang]["pay_card"], callback_data="payment:card")],
-        [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_checkout")]
-    ])
-    await callback.message.edit_text(LANGUAGES[lang]["select_payment"], reply_markup=keyboard)
-    await state.set_state(OrderState.waiting_for_payment_method)
-    await callback.answer()
-    
-@router.callback_query(F.data == "back_to_checkout", OrderState.waiting_for_payment_method)
-async def back_to_checkout(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        user_data = await state.get_data()
-        cart = user_data.get("cart", [])
-        store = user_data.get("store")
-        discount = user_data.get("discount", 0)
-        lang = get_user_language(callback.from_user.id)
-
+        
         if not cart:
             await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
             await state.clear()
             return
-
-        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-        total_uzs = sum(item["price"] for item in cart)
-        final_total = total_uzs - discount
-
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Proceed to Payment", callback_data="select_payment")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_cart")]
+            [InlineKeyboardButton(text=LANGUAGES[lang]["pay_cash"], callback_data="payment:cash")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["pay_card"], callback_data="payment:card")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="view_cart")]
         ])
-
-        await callback.message.edit_text(
-            f"Cart:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS\nFinal Total: {final_total} UZS",
-            reply_markup=keyboard
-        )
-        await state.set_state(OrderState.cart_management)
+        
+        await callback.message.edit_text(LANGUAGES[lang]["select_payment"], reply_markup=keyboard)
+        await state.set_state(OrderState.waiting_for_payment_method)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in back_to_checkout: {e}")
+        logging.error(f"Error in checkout: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
@@ -1476,155 +1295,212 @@ async def back_to_checkout(callback: types.CallbackQuery, state: FSMContext):
 async def process_payment_method(callback: types.CallbackQuery, state: FSMContext):
     try:
         payment_method = callback.data.split(":")[1]
+        lang = get_user_language(callback.from_user.id)
         user_data = await state.get_data()
         cart = user_data.get("cart", [])
-        store = user_data.get("store")
-        discount = user_data.get("discount", 0)
-        promo_code = user_data.get("promo_code")
-        age = user_data.get("age", "N/A")
-        latitude = user_data.get("latitude")
-        longitude = user_data.get("longitude")
-        lang = get_user_language(callback.from_user.id)
-
-        if not cart or not store:
-            await callback.message.edit_text(LANGUAGES[lang]["cart_empty"])
-            await state.clear()
-            return
-
-        cart_text = "\n".join(f"{item['name']} - {item['price']} UZS ({convert_to_usd(item['price'])} USD)" for item in cart)
-        total_uzs = sum(item["price"] for item in cart)
-        total_usd = convert_to_usd(total_uzs)
-
-        if payment_method == "cash":
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("""
-                INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (callback.from_user.id, cart_text, total_uzs, discount, promo_code, "cash", age, latitude, longitude))
-            order_id = c.lastrowid
-            conn.commit()
-            conn.close()
-
-            order_message = LANGUAGES[lang]["order_summary"].format(
-                cart_text=cart_text,
-                total_uzs=total_uzs,
-                total_usd=total_usd,
-                discount=discount,
-                age=age,
-                payment_method="Cash",
-                delivery_time="pending"
-            )
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Cancel Order", callback_data=f"cancel_order:{order_id}")],
-                [InlineKeyboardButton(text="Rate Delivery", callback_data=f"rate_delivery:{order_id}")]
-            ])
-            await callback.message.edit_text(f"Your order has been placed!\n{order_message}", reply_markup=keyboard)
-            for admin_id in ADMIN_ID:
-                await bot.send_message(admin_id, f"New Order #{order_id}:\n{order_message}\nPlease set delivery time with /set_delivery_time {order_id} <minutes>")
-            asyncio.create_task(auto_set_delivery_time(order_id, callback.from_user.id, cart_text, total_uzs, discount, promo_code, "Cash", age, state))
-            await state.set_state(OrderState.waiting_for_delivery_time)
-
-        elif payment_method == "card":
-            # Card payment functionality is commented out as per your request
-            await callback.message.edit_text("Card payment is currently disabled. Please choose cash payment.")
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=LANGUAGES[lang]["pay_cash"], callback_data="payment:cash")],
-                [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_checkout")]
-            ])
-            await callback.message.edit_reply_markup(reply_markup=keyboard)
-            return
-
+        total_uzs = sum(item["price"] * item["quantity"] for item in cart)
+        
+        await state.update_data(payment_method=payment_method)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=LANGUAGES[lang]["apply_promo"], callback_data="apply_promo")],
+            [InlineKeyboardButton(text="Continue without promo", callback_data="skip_promo")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="checkout")]
+        ])
+        
+        await callback.message.edit_text(
+            f"Total: {total_uzs} UZS\nPayment method: {payment_method}\nWould you like to apply a promo code?",
+            reply_markup=keyboard
+        )
+        await state.set_state(OrderState.waiting_for_promo)
         await callback.answer()
     except Exception as e:
         logging.error(f"Error in process_payment_method: {e}")
-        await callback.message.edit_text("Something went wrong during payment processing. Please try again.")
+        await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
-@router.message(Command("set_delivery_time"))
-async def set_delivery_time_command(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_ID:
-        lang = get_user_language(message.from_user.id)
-        await message.answer(LANGUAGES[lang]["admin_no_perm"])
-        return
-
+@router.callback_query(F.data == "apply_promo", OrderState.waiting_for_promo)
+async def prompt_promo_code(callback: types.CallbackQuery, state: FSMContext):
     try:
-        parts = message.text.split()
-        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
-            await message.answer("Usage: /set_delivery_time <order_id> <minutes>")
-            return
+        lang = get_user_language(callback.from_user.id)
+        await callback.message.edit_text(LANGUAGES[lang]["enter_promo"])
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in prompt_promo_code: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
 
-        order_id, delivery_time = int(parts[1]), int(parts[2])
+@router.message(OrderState.waiting_for_promo)
+async def apply_promo_code(message: Message, state: FSMContext):
+    try:
+        promo_code = message.text.strip()
+        lang = get_user_language(message.from_user.id)
+        user_data = await state.get_data()
+        total_uzs = sum(item["price"] * item["quantity"] for item in user_data.get("cart", []))
+        
+        discount = calculate_discount(total_uzs, promo_code)
+        if discount == 0:
+            await message.answer(LANGUAGES[lang]["promo_invalid"])
+            return
+        
+        await state.update_data(promo_code=promo_code, discount=discount)
+        await message.answer(LANGUAGES[lang]["promo_applied"].format(discount=discount))
+        
+        await finalize_order(message, state)
+    except Exception as e:
+        logging.error(f"Error in apply_promo_code: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.callback_query(F.data == "skip_promo", OrderState.waiting_for_promo)
+async def skip_promo(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        await state.update_data(promo_code=None, discount=0)
+        await finalize_order(callback.message, state)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in skip_promo: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
+
+async def finalize_order(message_or_callback: Message | types.CallbackQuery, state: FSMContext):
+    try:
+        user_data = await state.get_data()
+        cart = user_data.get("cart", [])
+        user_id = user_data.get("user_id")
+        lang = get_user_language(user_id)
+        total_uzs = sum(item["price"] * item["quantity"] for item in cart)
+        discount = user_data.get("discount", 0)
+        promo_code = user_data.get("promo_code")
+        payment_method = user_data.get("payment_method")
+        age = user_data.get("age", "N/A")
+        latitude = user_data.get("latitude")
+        longitude = user_data.get("longitude")
+        
+        cart_text = "\n".join([f"{item['name']} - {item['price']} UZS x {item['quantity']}" for item in cart])
+        total_usd = convert_to_usd(total_uzs)
+        
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT user_id, cart_text, total_uzs, discount, promo_code, payment_method, age FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
-        order = c.fetchone()
+        c.execute("""
+            INSERT INTO orders (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, latitude, longitude))
+        order_id = c.lastrowid
+        conn.commit()
+        conn.close()
+        
+        for admin_id in ADMIN_ID:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Set Delivery Time", callback_data=f"set_delivery:{order_id}")]
+            ])
+            await bot.send_message(admin_id, f"New Order #{order_id}:\n{cart_text}\nTotal: {total_uzs} UZS\nDiscount: {discount} UZS", reply_markup=keyboard)
+        
+        await bot.send_message(user_id, f"Order #{order_id} placed! Waiting for admin to set delivery time.")
+        
+        asyncio.create_task(auto_set_delivery_time(order_id, user_id, cart_text, total_uzs, discount, promo_code, payment_method, age, state))
+        
+        if isinstance(message_or_callback, Message):
+            await message_or_callback.answer("Order processing...")
+        else:
+            await message_or_callback.edit_text("Order processing...")
+    except Exception as e:
+        logging.error(f"Error in finalize_order: {e}")
+        if isinstance(message_or_callback, Message):
+            await message_or_callback.answer("Something went wrong. Please try again.")
+        else:
+            await message_or_callback.edit_text("Something went wrong. Please try again.")
+        await state.clear()
 
-        if not order:
-            await message.answer(f"Order #{order_id} not found or already confirmed.")
-            conn.close()
+@router.callback_query(F.data.startswith("set_delivery:"), OrderState.waiting_for_delivery_time)
+async def prompt_delivery_time(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        if callback.from_user.id not in ADMIN_ID:
+            lang = get_user_language(callback.from_user.id)
+            await callback.message.edit_text(LANGUAGES[lang]["admin_no_perm"])
+            await callback.answer()
             return
+        
+        order_id = callback.data.split(":")[1]
+        await state.update_data(order_id=order_id)
+        lang = get_user_language(callback.from_user.id)
+        await callback.message.edit_text(LANGUAGES[lang]["delivery_time_prompt"])
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in prompt_delivery_time: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
 
+@router.message(OrderState.waiting_for_delivery_time)
+async def set_delivery_time(message: Message, state: FSMContext):
+    try:
+        if message.from_user.id not in ADMIN_ID:
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["admin_no_perm"])
+            return
+        
+        user_data = await state.get_data()
+        order_id = user_data.get("order_id")
+        lang = get_user_language(message.from_user.id)
+        
+        try:
+            delivery_time = int(message.text.strip())
+            if delivery_time <= 0:
+                raise ValueError("Delivery time must be positive")
+        except ValueError:
+            await message.answer("Please enter a valid number of minutes (e.g., 45)")
+            return
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT user_id, cart_text, total_uzs, discount, promo_code, payment_method, age FROM orders WHERE id = ?", (order_id,))
+        order = c.fetchone()
+        if not order:
+            await message.answer("Order not found.")
+            await state.clear()
+            return
+        
         c.execute("UPDATE orders SET delivery_time = ?, status = 'confirmed' WHERE id = ?", (delivery_time, order_id))
         conn.commit()
         conn.close()
-
-        user_id, cart_text, total_uzs, discount, promo_code, payment_method, age = order
-        lang = get_user_language(user_id)
-        total_usd = convert_to_usd(total_uzs)
+        
+        total_usd = convert_to_usd(order["total_uzs"])
         order_message = LANGUAGES[lang]["order_summary"].format(
-            cart_text=cart_text,
-            total_uzs=total_uzs,
+            cart_text=order["cart_text"],
+            total_uzs=order["total_uzs"],
             total_usd=total_usd,
-            discount=discount,
-            age=age,
-            payment_method=payment_method,
+            discount=order["discount"],
+            age=order["age"],
+            payment_method=order["payment_method"],
             delivery_time=delivery_time
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Rate Delivery", callback_data=f"rate_delivery:{order_id}")]
         ])
-        await bot.send_message(user_id, f"Your order has been confirmed!\n{order_message}", reply_markup=keyboard)
+        await bot.send_message(order["user_id"], order_message, reply_markup=keyboard)
         await message.answer(f"Delivery time for Order #{order_id} set to {delivery_time} minutes.")
+        await state.clear()
     except Exception as e:
-        logging.error(f"Error in set_delivery_time_command: {e}")
-        await message.answer("Something went wrong. Please check the order ID and try again.")
-
-@router.callback_query(F.data.startswith("cancel_order:"))
-async def cancel_order(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        order_id = int(callback.data.split(":")[1])
-        lang = get_user_language(callback.from_user.id)
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'pending'", (order_id,))
-        if c.rowcount > 0:
-            conn.commit()
-            await callback.message.edit_text("Your order has been cancelled.")
-            for admin_id in ADMIN_ID:
-                await bot.send_message(admin_id, f"Order #{order_id} cancelled by user.")
-        else:
-            await callback.message.edit_text("Order cannot be cancelled now.")
-        conn.close()
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Error in cancel_order: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
+        logging.error(f"Error in set_delivery_time: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.callback_query(F.data.startswith("rate_delivery:"))
-async def rate_delivery_prompt(callback: types.CallbackQuery, state: FSMContext):
+async def rate_delivery(callback: types.CallbackQuery, state: FSMContext):
     try:
-        order_id = int(callback.data.split(":")[1])
+        order_id = callback.data.split(":")[1]
         lang = get_user_language(callback.from_user.id)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👍 Good", callback_data=f"feedback:{order_id}:good")],
             [InlineKeyboardButton(text="👎 Bad", callback_data=f"feedback:{order_id}:bad")]
         ])
         await callback.message.edit_text(LANGUAGES[lang]["rate_delivery"].format(phone=PHONE_NUMBER), reply_markup=keyboard)
+        await state.set_state(OrderState.waiting_for_feedback)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in rate_delivery_prompt: {e}")
+        logging.error(f"Error in rate_delivery: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.callback_query(F.data.startswith("feedback:"))
 async def process_feedback(callback: types.CallbackQuery, state: FSMContext):
@@ -1632,16 +1508,15 @@ async def process_feedback(callback: types.CallbackQuery, state: FSMContext):
         parts = callback.data.split(":")
         order_id, feedback = parts[1], parts[2]
         lang = get_user_language(callback.from_user.id)
-
-        if feedback == "good":
-            await callback.message.edit_text(LANGUAGES[lang]["feedback_sent"])
-            for admin_id in ADMIN_ID:
-                await bot.send_message(admin_id, f"Order #{order_id} received positive feedback!")
-            await state.clear()
-        elif feedback == "bad":
+        
+        if feedback == "bad":
             await callback.message.edit_text(LANGUAGES[lang]["feedback_prompt"])
             await state.update_data(order_id=order_id)
-            await state.set_state(OrderState.waiting_for_feedback)
+        else:
+            await callback.message.edit_text(LANGUAGES[lang]["feedback_sent"])
+            for admin_id in ADMIN_ID:
+                await bot.send_message(admin_id, f"Order #{order_id} rated as Good!")
+            await state.clear()
         await callback.answer()
     except Exception as e:
         logging.error(f"Error in process_feedback: {e}")
@@ -1649,208 +1524,228 @@ async def process_feedback(callback: types.CallbackQuery, state: FSMContext):
         await state.clear()
 
 @router.message(OrderState.waiting_for_feedback)
-async def process_feedback_text(message: Message, state: FSMContext):
+async def save_feedback(message: Message, state: FSMContext):
     try:
         user_data = await state.get_data()
         order_id = user_data.get("order_id")
         lang = get_user_language(message.from_user.id)
-        feedback_text = message.text.strip()
-
-        await message.answer(LANGUAGES[lang]["feedback_sent"])
+        
         for admin_id in ADMIN_ID:
-            await bot.send_message(admin_id, f"Order #{order_id} received negative feedback:\n{feedback_text}")
+            await bot.send_message(admin_id, f"Order #{order_id} rated as Bad!\nFeedback: {message.text}")
+        await message.answer(LANGUAGES[lang]["feedback_sent"])
         await state.clear()
     except Exception as e:
-        logging.error(f"Error in process_feedback_text: {e}")
+        logging.error(f"Error in save_feedback: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
 @router.message(Command("add_product"))
-async def add_product_command(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_ID:
+async def add_product_start(message: Message, state: FSMContext):
+    try:
+        if message.from_user.id not in ADMIN_ID:
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["admin_no_perm"])
+            return
+        
         lang = get_user_language(message.from_user.id)
-        await message.answer(LANGUAGES[lang]["admin_no_perm"])
-        return
-
-    lang = get_user_language(message.from_user.id)
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT name FROM stores")
-    stores = c.fetchall()
-    conn.close()
-
-    if not stores:
-        await message.answer("No stores available. Please add stores first.")
-        return
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=store['name'], callback_data=f"store:{store['name']}")]
-        for store in stores
-    ])
-    await message.answer(LANGUAGES[lang]["select_store"], reply_markup=keyboard)
-    await state.set_state(AddProductState.waiting_for_store)
-
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT name FROM stores")
+        stores = c.fetchall()
+        conn.close()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=store["name"], callback_data=f"store:{store['name']}")]
+            for store in stores
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["cancel_button"], callback_data="cancel_admin")]])
+        
+        await message.answer(LANGUAGES[lang]["select_store"], reply_markup=keyboard)
+        await state.set_state(AddProductState.waiting_for_store)
+    except Exception as e:
+        logging.error(f"Error in add_product_start: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.callback_query(F.data.startswith("store:"), AddProductState.waiting_for_store)
-async def select_store(callback: types.CallbackQuery, state: FSMContext):
+async def process_store(callback: types.CallbackQuery, state: FSMContext):
     try:
         store = callback.data.split(":")[1]
         lang = get_user_language(callback.from_user.id)
         await state.update_data(store=store)
-        logging.debug(f"Admin selected store: {store}")
         await callback.message.edit_text(LANGUAGES[lang]["enter_category"])
         await state.set_state(AddProductState.waiting_for_category)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in select_store: {e}")
+        logging.error(f"Error in process_store: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-        
+
 @router.message(AddProductState.waiting_for_category)
 async def process_category_input(message: Message, state: FSMContext):
-    category = message.text.strip()
-    lang = get_user_language(message.from_user.id)
-    if not category:
-        await message.answer(LANGUAGES[lang]["category_empty"])
-        return
-    await state.update_data(category=category)
-    logging.debug(f"Admin entered category: {category}")
-    await message.answer(LANGUAGES[lang]["enter_brand"])
-    await state.set_state(AddProductState.waiting_for_brand)
-    
+    try:
+        lang = get_user_language(message.from_user.id)
+        if not message.text or not message.text.strip():
+            await message.answer(LANGUAGES[lang]["category_empty"])
+            return
+        await state.update_data(category=message.text.strip())
+        await message.answer(LANGUAGES[lang]["enter_brand"])
+        await state.set_state(AddProductState.waiting_for_brand)
+    except Exception as e:
+        logging.error(f"Error in process_category_input: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.message(AddProductState.waiting_for_brand)
 async def process_brand_input(message: Message, state: FSMContext):
-    brand = message.text.strip()
-    lang = get_user_language(message.from_user.id)
-    if not brand:
-        await message.answer(LANGUAGES[lang]["brand_empty"])
-        return
-    await state.update_data(brand=brand)
-    logging.debug(f"Admin entered brand: {brand}")
-    await message.answer(LANGUAGES[lang]["enter_name_prod"])
-    await state.set_state(AddProductState.waiting_for_product_name)
+    try:
+        lang = get_user_language(message.from_user.id)
+        if not message.text or not message.text.strip():
+            await message.answer(LANGUAGES[lang]["brand_empty"])
+            return
+        await state.update_data(brand=message.text.strip())
+        await message.answer(LANGUAGES[lang]["enter_name_prod"])
+        await state.set_state(AddProductState.waiting_for_product_name)
+    except Exception as e:
+        logging.error(f"Error in process_brand_input: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.message(AddProductState.waiting_for_product_name)
 async def process_product_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    lang = get_user_language(message.from_user.id)
-    if not name:
-        await message.answer(LANGUAGES[lang]["name_empty_prod"])
-        return
-    await state.update_data(name=name)
-    logging.debug(f"Admin entered product name: {name}")
-    await message.answer(LANGUAGES[lang]["enter_price"])
-    await state.set_state(AddProductState.waiting_for_product_price)
-    
+    try:
+        lang = get_user_language(message.from_user.id)
+        if not message.text or not message.text.strip():
+            await message.answer(LANGUAGES[lang]["name_empty_prod"])
+            return
+        await state.update_data(name=message.text.strip())
+        await message.answer(LANGUAGES[lang]["enter_price"])
+        await state.set_state(AddProductState.waiting_for_product_price)
+    except Exception as e:
+        logging.error(f"Error in process_product_name: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.message(AddProductState.waiting_for_product_price)
 async def process_product_price(message: Message, state: FSMContext):
-    lang = get_user_language(message.from_user.id)
     try:
-        price = float(message.text.strip())
-        if price <= 0:
-            await message.answer(LANGUAGES[lang]["price_negative"])
+        lang = get_user_language(message.from_user.id)
+        try:
+            price = float(message.text.strip())
+            if price < 0:
+                await message.answer(LANGUAGES[lang]["price_negative"])
+                return
+        except ValueError:
+            await message.answer(LANGUAGES[lang]["price_invalid"])
             return
-    except ValueError:
-        await message.answer(LANGUAGES[lang]["price_invalid"])
-        return
-    await state.update_data(price=price)
-    logging.debug(f"Admin entered price: {price}")
-    await message.answer(LANGUAGES[lang]["enter_description"])
-    await state.set_state(AddProductState.waiting_for_product_description)
-    
+        await state.update_data(price=price)
+        await message.answer(LANGUAGES[lang]["enter_description"])
+        await state.set_state(AddProductState.waiting_for_product_description)
+    except Exception as e:
+        logging.error(f"Error in process_product_price: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.message(AddProductState.waiting_for_product_description)
 async def process_product_description(message: Message, state: FSMContext):
-    description = message.text.strip()
-    lang = get_user_language(message.from_user.id)
-    if not description:
-        await message.answer(LANGUAGES[lang]["description_empty"])
-        return
-    await state.update_data(description=description)
-    logging.debug(f"Admin entered description: {description}")
-    await message.answer(LANGUAGES[lang]["enter_photo"])
-    await state.set_state(AddProductState.waiting_for_photo)
-    
+    try:
+        lang = get_user_language(message.from_user.id)
+        if not message.text or not message.text.strip():
+            await message.answer(LANGUAGES[lang]["description_empty"])
+            return
+        await state.update_data(description=message.text.strip())
+        await message.answer(LANGUAGES[lang]["enter_photo"])
+        await state.set_state(AddProductState.waiting_for_photo)
+    except Exception as e:
+        logging.error(f"Error in process_product_description: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.message(AddProductState.waiting_for_photo)
 async def process_product_photo(message: Message, state: FSMContext):
-    lang = get_user_language(message.from_user.id)
-    user_data = await state.get_data()
-    
-    if message.text == "/skip":
+    try:
+        user_data = await state.get_data()
+        lang = get_user_language(message.from_user.id)
+        
         image_url = None
-    elif message.photo:
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        image_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file.file_path}"
-    else:
-        await message.answer("Please send a photo or type /skip")
-        return
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO products (store, category, brand, name, price, description, image_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (user_data["store"], user_data["category"], user_data["brand"], 
-          user_data["name"], user_data["price"], user_data["description"], image_url))
-    product_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    
-    logging.debug(f"Product saved: ID={product_id}, Store={user_data['store']}, Name={user_data['name']}")
-    await message.answer(LANGUAGES[lang]["product_added"].format(name=user_data["name"]))
-    await state.clear()
-# Note: process_product_photo will be in the next segment (Lines 1001–1500) with the updated fix.
+        if message.text == "/skip":
+            image_url = None
+        elif message.photo:
+            image_url = message.photo[-1].file_id
+        else:
+            await message.answer("Please send a photo or type /skip")
+            return
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO products (store, category, brand, name, price, description, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (user_data["store"], user_data["category"], user_data["brand"], 
+              user_data["name"], user_data["price"], user_data["description"], image_url))
+        conn.commit()
+        conn.close()
+        
+        await message.answer(LANGUAGES[lang]["product_added"].format(name=user_data["name"]))
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Error in process_product_photo: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
+@router.callback_query(F.data == "cancel_admin")
+async def cancel_admin_action(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        lang = get_user_language(callback.from_user.id)
+        await callback.message.edit_text("Action cancelled.")
+        await state.clear()
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Error in cancel_admin_action: {e}")
+        await callback.message.edit_text("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.message(Command("view_products"))
-async def view_products_command(message: Message, state: FSMContext):
-    logging.info(f"User ID: {message.from_user.id}")
-    if message.from_user.id not in ADMIN_ID:
+async def view_products(message: Message, state: FSMContext):
+    try:
+        if message.from_user.id not in ADMIN_ID:
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["admin_no_perm"])
+            return
+        
         lang = get_user_language(message.from_user.id)
-        await message.answer(LANGUAGES[lang]["admin_no_perm"])
-        return
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, store, category, brand, name, price, description, image_url FROM products")
-    products = c.fetchall()
-    conn.close()
-    
-    lang = get_user_language(message.from_user.id)
-    if not products:
-        await message.answer(LANGUAGES[lang]["no_products_admin"])
-        return
-    
-    for p in products:
-        response = (
-            f"{LANGUAGES[lang]['view_products']}\n"
-            f"ID: {p['id']}\n"
-            f"Store: {p['store']}\n"
-            f"Category: {p['category']}\n"
-            f"Brand: {p['brand']}\n"
-            f"Name: {p['name']}\n"
-            f"Price: {p['price']} UZS ({convert_to_usd(p['price'])} USD)\n"
-            f"Description: {p['description']}\n"
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text=LANGUAGES[lang]["edit_button"], callback_data=f"edit_product:{p['id']}"),
-                InlineKeyboardButton(text=LANGUAGES[lang]["delete_button"], callback_data=f"delete_product:{p['id']}")
-            ]
-        ])
-        if p['image_url']:
-            await bot.send_photo(message.chat.id, p['image_url'], caption=response, reply_markup=keyboard)
-        else:
-            await message.answer(response, reply_markup=keyboard)
-            
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, store, category, brand, name, price FROM products")
+        products = c.fetchall()
+        conn.close()
+        
+        if not products:
+            await message.answer(LANGUAGES[lang]["no_products_admin"])
+            return
+        
+        products_text = "\n".join([f"ID: {p['id']} | {p['store']} | {p['category']} | {p['brand']} | {p['name']} - {p['price']} UZS" 
+                                 for p in products])
+        await message.answer(f"{LANGUAGES[lang]['view_products']}\n{products_text}")
+    except Exception as e:
+        logging.error(f"Error in view_products: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
+
 @router.message(Command("delete_product"))
-async def delete_product_command(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_ID:
+async def delete_product_start(message: Message, state: FSMContext):
+    try:
+        if message.from_user.id not in ADMIN_ID:
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["admin_no_perm"])
+            return
+        
         lang = get_user_language(message.from_user.id)
-        await message.answer(LANGUAGES[lang]["admin_no_perm"])
-        return
-    lang = get_user_language(message.from_user.id)
-    await message.answer(LANGUAGES[lang]["enter_del_id"])
-    await state.set_state(DeleteProductState.waiting_for_product_id)
+        await message.answer(LANGUAGES[lang]["enter_del_id"])
+        await state.set_state(DeleteProductState.waiting_for_product_id)
+    except Exception as e:
+        logging.error(f"Error in delete_product_start: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.message(DeleteProductState.waiting_for_product_id)
 async def process_delete_product(message: Message, state: FSMContext):
@@ -1882,74 +1777,20 @@ async def process_delete_product(message: Message, state: FSMContext):
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
-@router.callback_query(F.data.startswith("delete_product:"))
-async def delete_product_inline(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        product_id = int(callback.data.split(":")[1])
-        lang = get_user_language(callback.from_user.id)
-        
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT name FROM products WHERE id = ?", (product_id,))
-        product = c.fetchone()
-        if not product:
-            await callback.message.edit_text(LANGUAGES[lang]["id_not_found"])
-            conn.close()
-            return
-        
-        c.execute("DELETE FROM products WHERE id = ?", (product_id,))
-        conn.commit()
-        conn.close()
-        
-        await callback.message.edit_text(LANGUAGES[lang]["product_deleted"].format(name=product["name"], id=product_id))
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Error in delete_product_inline: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
-        await state.clear()
-
 @router.message(Command("edit_product"))
-async def edit_product_command(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_ID:
-        lang = get_user_language(message.from_user.id)
-        await message.answer(LANGUAGES[lang]["admin_no_perm"])
-        return
-    lang = get_user_language(message.from_user.id)
-    await message.answer(LANGUAGES[lang]["enter_edit_id"])
-    await state.set_state(EditProductState.waiting_for_product_id)
-
-@router.callback_query(F.data.startswith("edit_product:"))
-async def edit_product_inline(callback: types.CallbackQuery, state: FSMContext):
+async def edit_product_start(message: Message, state: FSMContext):
     try:
-        product_id = int(callback.data.split(":")[1])
-        lang = get_user_language(callback.from_user.id)
-        
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT * FROM products WHERE id = ?", (product_id,))
-        product = c.fetchone()
-        conn.close()
-        
-        if not product:
-            await callback.message.edit_text(LANGUAGES[lang]["id_not_found"])
+        if message.from_user.id not in ADMIN_ID:
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["admin_no_perm"])
             return
         
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Store", callback_data=f"field:{product_id}:store")],
-            [InlineKeyboardButton(text="Category", callback_data=f"field:{product_id}:category")],
-            [InlineKeyboardButton(text="Brand", callback_data=f"field:{product_id}:brand")],
-            [InlineKeyboardButton(text="Name", callback_data=f"field:{product_id}:name")],
-            [InlineKeyboardButton(text="Price", callback_data=f"field:{product_id}:price")],
-            [InlineKeyboardButton(text="Description", callback_data=f"field:{product_id}:description")],
-            [InlineKeyboardButton(text="Image", callback_data=f"field:{product_id}:image_url")]
-        ])
-        await callback.message.edit_text(LANGUAGES[lang]["edit_field"].format(id=product_id), reply_markup=keyboard)
-        await state.set_state(EditProductState.waiting_for_field)
-        await state.update_data(product_id=product_id)
-        await callback.answer()
+        lang = get_user_language(message.from_user.id)
+        await message.answer(LANGUAGES[lang]["enter_edit_id"])
+        await state.set_state(EditProductState.waiting_for_product_id)
     except Exception as e:
-        logging.error(f"Error in edit_product_inline: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
+        logging.error(f"Error in edit_product_start: {e}")
+        await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
 @router.message(EditProductState.waiting_for_product_id)
@@ -1964,69 +1805,58 @@ async def process_edit_product_id(message: Message, state: FSMContext):
         
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT * FROM products WHERE id = ?", (product_id,))
-        product = c.fetchone()
+        c.execute("SELECT id FROM products WHERE id = ?", (product_id,))
+        if not c.fetchone():
+            await message.answer(LANGUAGES[lang]["id_not_found"])
+            conn.close()
+            return
         conn.close()
         
-        if not product:
-            await message.answer(LANGUAGES[lang]["id_not_found"])
-            return
-        
+        await state.update_data(product_id=product_id)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Store", callback_data=f"field:{product_id}:store")],
-            [InlineKeyboardButton(text="Category", callback_data=f"field:{product_id}:category")],
-            [InlineKeyboardButton(text="Brand", callback_data=f"field:{product_id}:brand")],
-            [InlineKeyboardButton(text="Name", callback_data=f"field:{product_id}:name")],
-            [InlineKeyboardButton(text="Price", callback_data=f"field:{product_id}:price")],
-            [InlineKeyboardButton(text="Description", callback_data=f"field:{product_id}:description")],
-            [InlineKeyboardButton(text="Image", callback_data=f"field:{product_id}:image_url")]
+            [InlineKeyboardButton(text="Name", callback_data="field:name")],
+            [InlineKeyboardButton(text="Price", callback_data="field:price")],
+            [InlineKeyboardButton(text="Description", callback_data="field:description")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["cancel_button"], callback_data="cancel_admin")]
         ])
         await message.answer(LANGUAGES[lang]["edit_field"].format(id=product_id), reply_markup=keyboard)
         await state.set_state(EditProductState.waiting_for_field)
-        await state.update_data(product_id=product_id)
     except Exception as e:
         logging.error(f"Error in process_edit_product_id: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
 @router.callback_query(F.data.startswith("field:"), EditProductState.waiting_for_field)
-async def select_field(callback: types.CallbackQuery, state: FSMContext):
+async def process_edit_field(callback: types.CallbackQuery, state: FSMContext):
     try:
-        parts = callback.data.split(":")
-        product_id, field = parts[1], parts[2]
+        field = callback.data.split(":")[1]
         lang = get_user_language(callback.from_user.id)
         await state.update_data(field=field)
         await callback.message.edit_text(LANGUAGES[lang]["enter_new_value"].format(field=field))
         await state.set_state(EditProductState.waiting_for_new_value)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in select_field: {e}")
+        logging.error(f"Error in process_edit_field: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
 @router.message(EditProductState.waiting_for_new_value)
 async def process_new_value(message: Message, state: FSMContext):
     try:
-        new_value = message.text.strip()
-        lang = get_user_language(message.from_user.id)
-        if not new_value:
-            await message.answer(LANGUAGES[lang]["value_empty"])
-            return
-        
         user_data = await state.get_data()
         product_id = user_data["product_id"]
         field = user_data["field"]
+        lang = get_user_language(message.from_user.id)
         
-        valid_fields = ["store", "category", "brand", "name", "price", "description", "image_url"]
-        if field not in valid_fields:
-            await message.answer("Invalid field selected!")
-            await state.clear()
+        if not message.text or not message.text.strip():
+            await message.answer(LANGUAGES[lang]["value_empty"])
             return
         
+        value = message.text.strip()
         if field == "price":
             try:
-                new_value = float(new_value)
-                if new_value <= 0:
+                value = float(value)
+                if value < 0:
                     await message.answer(LANGUAGES[lang]["price_negative"])
                     return
             except ValueError:
@@ -2035,54 +1865,58 @@ async def process_new_value(message: Message, state: FSMContext):
         
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute(f"UPDATE products SET {field} = ? WHERE id = ?", (new_value, product_id))
+        c.execute(f"UPDATE products SET {field} = ? WHERE id = ?", (value, product_id))
         conn.commit()
         conn.close()
         
-        await message.answer(LANGUAGES[lang]["product_updated"].format(id=product_id, field=field, value=new_value))
+        await message.answer(LANGUAGES[lang]["product_updated"].format(id=product_id, field=field, value=value))
         await state.clear()
     except Exception as e:
         logging.error(f"Error in process_new_value: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
-        
+
 @router.message(Command("add_promo"))
-async def add_promo_command(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_ID:
+async def add_promo_start(message: Message, state: FSMContext):
+    try:
+        if message.from_user.id not in ADMIN_ID:
+            lang = get_user_language(message.from_user.id)
+            await message.answer(LANGUAGES[lang]["admin_no_perm"])
+            return
+        
         lang = get_user_language(message.from_user.id)
-        await message.answer(LANGUAGES[lang]["admin_no_perm"])
-        return
-    lang = get_user_language(message.from_user.id)
-    await message.answer(LANGUAGES[lang]["enter_promo_code"])
-    await state.set_state(AddPromoState.waiting_for_code)
+        await message.answer(LANGUAGES[lang]["enter_promo_code"])
+        await state.set_state(AddPromoState.waiting_for_code)
+    except Exception as e:
+        logging.error(f"Error in add_promo_start: {e}")
+        await message.answer("Something went wrong. Please try again.")
+        await state.clear()
 
 @router.message(AddPromoState.waiting_for_code)
-async def process_promo_code_input(message: Message, state: FSMContext):
+async def process_promo_code(message: Message, state: FSMContext):
     try:
-        promo_code = message.text.strip()
+        code = message.text.strip()
         lang = get_user_language(message.from_user.id)
-        if not promo_code:
-            await message.answer(LANGUAGES[lang]["value_empty"])
-            return
         
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT code FROM promo_codes WHERE code = ?", (promo_code,))
+        c.execute("SELECT code FROM promo_codes WHERE code = ?", (code,))
         if c.fetchone():
             await message.answer(LANGUAGES[lang]["promo_exists"])
             conn.close()
             return
         conn.close()
         
-        await state.update_data(promo_code=promo_code)
+        await state.update_data(code=code)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=LANGUAGES[lang]["discount_fixed"], callback_data="discount_type:fixed")],
-            [InlineKeyboardButton(text=LANGUAGES[lang]["discount_percent"], callback_data="discount_type:percent")]
+            [InlineKeyboardButton(text=LANGUAGES[lang]["discount_percent"], callback_data="discount_type:percent")],
+            [InlineKeyboardButton(text=LANGUAGES[lang]["cancel_button"], callback_data="cancel_admin")]
         ])
         await message.answer(LANGUAGES[lang]["enter_discount_type"], reply_markup=keyboard)
         await state.set_state(AddPromoState.waiting_for_discount_type)
     except Exception as e:
-        logging.error(f"Error in process_promo_code_input: {e}")
+        logging.error(f"Error in process_promo_code: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
@@ -2105,35 +1939,33 @@ async def process_discount_value(message: Message, state: FSMContext):
     try:
         lang = get_user_language(message.from_user.id)
         try:
-            discount_value = float(message.text.strip())
-            if discount_value <= 0:
+            value = float(message.text.strip())
+            if value <= 0:
                 await message.answer("Discount value must be positive!")
                 return
         except ValueError:
-            await message.answer("Please enter a valid numeric discount value!")
+            await message.answer("Please enter a valid numeric value!")
             return
         
         user_data = await state.get_data()
-        promo_code = user_data["promo_code"]
+        code = user_data["code"]
         discount_type = user_data["discount_type"]
         
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("INSERT INTO promo_codes (code, discount_type, discount_value) VALUES (?, ?, ?)",
-                  (promo_code, discount_type, discount_value))
+        c.execute("INSERT INTO promo_codes (code, discount_type, discount_value) VALUES (?, ?, ?)", 
+                  (code, discount_type, value))
         conn.commit()
         conn.close()
         
-        await message.answer(LANGUAGES[lang]["promo_added"].format(code=promo_code, value=discount_value, type=discount_type))
+        await message.answer(LANGUAGES[lang]["promo_added"].format(code=code, value=value, type=discount_type))
         await state.clear()
     except Exception as e:
         logging.error(f"Error in process_discount_value: {e}")
         await message.answer("Something went wrong. Please try again.")
         await state.clear()
 
-
-# End of commented-out card payment handlers
-
+# Main function to run the bot
 async def main():
     setup_db()
     await dp.start_polling(bot)
