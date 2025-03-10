@@ -17,6 +17,8 @@ from aiogram import F
 from fastapi import FastAPI
 import geopy.distance
 
+logging.basicConfig(level=logging.DEBUG)
+
 # Configuration
 API_TOKEN = '7713134448:AAF8t-OZPCRfkYPC6PM0VGYyKXNDZytyZCM'
 ADMIN_ID = [5703082829, 2100140929]  # Replace with actual admin IDs
@@ -381,6 +383,11 @@ def get_db_connection():
 def setup_db():
     conn = get_db_connection()
     c = conn.cursor()
+    logging.info("Setting up database...")
+    # ... (rest of the function)
+    conn.commit()
+    logging.info("Database setup completed.")
+    conn.close()
     
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
