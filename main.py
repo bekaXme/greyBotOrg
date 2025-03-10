@@ -1997,8 +1997,9 @@ async def main():
     setup_db()
     await dp.start_polling(bot)
 
+import logging
+logger = logging.getLogger(__name__)
 def log_exception(e: Exception, context: str):
     logger.error(f"Error in {context}: {str(e)}", exc_info=True)
-
 if __name__ == "__main__":
     asyncio.run(main())
