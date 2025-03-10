@@ -3,12 +3,13 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   build:
     runs-on:
       - self-hosted
+      - greybotorg
 
     steps:
       - uses: actions/checkout@v2
@@ -17,6 +18,8 @@ jobs:
         run: |
           cd ~/bot/greyBotOrg
           git pull
+          echo "${{secrets.SERVER_PASSWORD}}"
+          echo "${{secrets.SERVER_PASSWORD}}" | sudo -S -v
           sudo supervisorctl update
           sudo supervisorctl stop tgbot
           sudo supervisorctl start tgbot
