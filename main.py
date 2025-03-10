@@ -416,11 +416,8 @@ def setup_db():
     conn = get_db_connection()
     c = conn.cursor()
     logger.info("Setting up database...")
-    # ... (rest of the function)
-    conn.commit()
-    logger.info("Database setup completed.")
-    conn.close()
     
+    # Создаем таблицы
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -474,27 +471,12 @@ def setup_db():
     c.execute("""
         CREATE TABLE IF NOT EXISTS promo_codes (
             code TEXT PRIMARY KEY,
-            discount_type TEXT,  -- 'fixed' or 'percent'
+            discount_type TEXT,
             discount_value REAL
         )
     """)
     
-    # Commenting out the cards table creation since we're disabling card functionality
-    """
-    c.execute(
-        CREATE TABLE IF NOT EXISTS cards (
-            user_id INTEGER,
-            card_number TEXT,
-            expiry_date TEXT,
-            cvc TEXT,
-            phone TEXT,
-            verified INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, card_number)
-        )
-    )
-    """
-    
-    # Add missing columns if they don't exist
+    # Добавляем недостающие столбцы
     try:
         c.execute("ALTER TABLE orders ADD COLUMN latitude REAL")
     except sqlite3.OperationalError:
@@ -516,6 +498,7 @@ def setup_db():
     except sqlite3.OperationalError:
         pass
     
+    # Добавляем начальные данные
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
               (1, 'ЦУМ', 41.3111, 69.2797))
     c.execute("INSERT OR IGNORE INTO stores (id, name, latitude, longitude) VALUES (?, ?, ?, ?)", 
@@ -529,11 +512,9 @@ def setup_db():
                   ('Sergeli', 'Clothing', 'Nike', 'Air Max', 1530350, 'Running shoes'))
         c.execute("INSERT INTO products (store, category, brand, name, price, description) VALUES (?, ?, ?, ?, ?, ?)",
                   ('Sergeli', 'Electronics', 'Apple', 'iPhone 14', 13999999, 'Latest iPhone model'))
-        
+    
     conn.commit()
-    c.execute("SELECT store, category, name FROM products WHERE store = 'Sergeli'")
-    products = c.fetchall()
-    print("Products for Sergeli after setup:", products)
+    logger.info("Database setup completed.")
     conn.close()
 
 # Helper functions
