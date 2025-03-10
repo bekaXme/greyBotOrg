@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on:
+      - self-hosted
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Run on self-hosted server
+        run: |
+          cd ~/bot/greyBotOrg
+          git pull
+          sudo supervisorctl update
+          sudo supervisorctl stop tgbot
+          sudo supervisorctl start tgbot
