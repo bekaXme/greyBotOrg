@@ -1106,7 +1106,7 @@ async def process_brand(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
     except Exception as e:
         logging.error(f"Error in process_brand: {e}")
-                await callback.message.edit_text("Something went wrong. Please try again.")
+        await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
 
 @router.callback_query(F.data == "back_to_category", OrderState.selecting_product)
