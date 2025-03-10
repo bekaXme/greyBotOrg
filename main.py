@@ -354,7 +354,7 @@ class AddProductState(StatesGroup):
     waiting_for_product_price = State()
     waiting_for_product_description = State()
     waiting_for_photo = State()
-
+    
 class EditProductState(StatesGroup):
     waiting_for_product_id = State()
     waiting_for_field = State()
@@ -955,77 +955,35 @@ async def process_location(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "order_start", OrderState.selecting_action)
 async def start_ordering(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        if not is_within_working_hours():
-            lang = get_user_language(callback.from_user.id)
-            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
-            await callback.answer()
-            return
-
-        user_data = await state.get_data()
-        store = user_data.get("store")
-        if not store:
-            raise ValueError("Store not found in state data")
-        lang = get_user_language(callback.from_user.id)
-        
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT DISTINCT category FROM products WHERE store = ?", (store,))
-        categories = c.fetchall()
-        logging.info(f"Store: {store}, Categories found: {[cat['category'] for cat in categories]}")
-        conn.close()
-        
-        if not categories:
-            await callback.message.edit_text(LANGUAGES[lang]["no_products"].format(store=store))
-            await state.clear()
-            return
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=cat['category'], callback_data=f"cat:{store}:{cat['category']}")]
-            for cat in categories
-        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_action")]])
-        
-        await callback.message.edit_text(LANGUAGES[lang]["select_category"].format(store=store), reply_markup=keyboard)
-        await state.set_state(OrderState.selecting_category)
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Error in start_ordering: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
+    user_data = await state.get_data()
+    store = user_data.get("store")
+    lang = get_user_language(callback.from_user.id)
+    
+    if not store:
+        await callback.message.edit_text("Store not found. Please restart with /order.")
         await state.clear()
-
-@router.message(AddProductState.waiting_for_photo)
-async def process_product_photo(message: Message, state: FSMContext):
-    try:
-        lang = get_user_language(message.from_user.id)
-        user_data = await state.get_data()
-        
-        if message.text == "/skip":
-            image_url = None
-        elif message.photo:
-            photo = message.photo[-1]
-            file = await bot.get_file(photo.file_id)
-            image_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file.file_path}"
-        else:
-            await message.answer("Please send a photo or type /skip")
-            return
-        
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO products (store, category, brand, name, price, description, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_data["store"], user_data["category"], user_data["brand"], 
-              user_data["name"], user_data["price"], user_data["description"], image_url))
-        conn.commit()
-        logging.info(f"Product added: {user_data['name']} to store {user_data['store']}, category {user_data['category']}")
-        conn.close()
-        
-        await message.answer(LANGUAGES[lang]["product_added"].format(name=user_data["name"]))
+        return
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT category FROM products WHERE store = ?", (store,))
+    categories = c.fetchall()
+    conn.close()
+    
+    logging.debug(f"Categories for {store}: {[cat['category'] for cat in categories]}")
+    if not categories:
+        await callback.message.edit_text(LANGUAGES[lang]["no_products"].format(store=store))
         await state.clear()
-    except Exception as e:
-        logging.error(f"Error in process_product_photo: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
+        return
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=cat['category'], callback_data=f"cat:{store}:{cat['category']}")]
+        for cat in categories
+    ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_action")]])
+    
+    await callback.message.edit_text(LANGUAGES[lang]["select_category"].format(store=store), reply_markup=keyboard)
+    await state.set_state(OrderState.selecting_category)
+    await callback.answer()
         
 @router.callback_query(F.data == "back_to_action", OrderState.selecting_category)
 async def back_to_action_from_category(callback: types.CallbackQuery, state: FSMContext):
@@ -1066,49 +1024,37 @@ async def back_to_main_from_action(callback: types.CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data.startswith("cat:"), OrderState.selecting_category)
 async def process_category(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        if not is_within_working_hours():
-            lang = get_user_language(callback.from_user.id)
-            await callback.message.edit_text(LANGUAGES[lang]["outside_working_hours"])
-            await callback.answer()
-            return
-
-        parts = callback.data.split(":")
-        if len(parts) != 3:
-            raise ValueError("Invalid callback data format")
-        _, store, category = parts
-        lang = get_user_language(callback.from_user.id)
+    parts = callback.data.split(":")
+    store, category = parts[1], parts[2]
+    lang = get_user_language(callback.from_user.id)
+    
+    if category in RESTRICTED_CATEGORIES:
+        await callback.message.edit_text(LANGUAGES[lang]["enter_age"])
+        await state.update_data(store=store, category=category)
+        await state.set_state(OrderState.waiting_for_age)
+    else:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT brand FROM products WHERE store = ? AND category = ?", (store, category))
+        brands = c.fetchall()
+        conn.close()
         
-        if category in RESTRICTED_CATEGORIES:
-            await callback.message.edit_text(LANGUAGES[lang]["enter_age"])
-            await state.update_data(store=store, category=category)
-            await state.set_state(OrderState.waiting_for_age)
-        else:
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("SELECT DISTINCT brand FROM products WHERE store = ? AND category = ?", (store, category))
-            brands = c.fetchall()
-            conn.close()
-            
-            if not brands:
-                await callback.message.edit_text(LANGUAGES[lang]["no_brands"].format(category=category, store=store))
-                await state.clear()
-                return
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=brand['brand'], callback_data=f"brand:{store}:{category}:{brand['brand']}")]
-                for brand in brands
-            ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
-            
-            await callback.message.edit_text(LANGUAGES[lang]["select_brand"].format(category=category), reply_markup=keyboard)
-            await state.update_data(category=category)
-            await state.set_state(OrderState.selecting_brand)
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Error in process_category: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
-        await state.clear()
-
+        logging.debug(f"Brands for {store}/{category}: {[b['brand'] for b in brands]}")
+        if not brands:
+            await callback.message.edit_text(LANGUAGES[lang]["no_brands"].format(category=category, store=store))
+            await state.clear()
+            return
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=brand['brand'], callback_data=f"brand:{store}:{category}:{brand['brand']}")]
+            for brand in brands
+        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
+        
+        await callback.message.edit_text(LANGUAGES[lang]["select_brand"].format(category=category), reply_markup=keyboard)
+        await state.update_data(category=category)
+        await state.set_state(OrderState.selecting_brand)
+    await callback.answer()
+    
 @router.callback_query(F.data == "back_to_category", OrderState.selecting_brand)
 async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1181,39 +1127,33 @@ async def process_age(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("brand:"), OrderState.selecting_brand)
 async def process_brand(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        parts = callback.data.split(":")
-        if len(parts) != 4:
-            raise ValueError("Invalid callback data format")
-        _, store, category, brand = parts
-        lang = get_user_language(callback.from_user.id)
-        
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT id, name, price, description, image_url FROM products WHERE store = ? AND category = ? AND brand = ?", 
-                  (store, category, brand))
-        products = c.fetchall()
-        conn.close()
-        
-        if not products:
-            await callback.message.edit_text(LANGUAGES[lang]["no_products_brand"].format(store=store, category=category, brand=brand))
-            await state.clear()
-            return
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"{p['name']} - {p['price']} UZS", callback_data=f"prod:{store}:{category}:{brand}:{p['id']}")]
-            for p in products
-        ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
-        
-        await callback.message.edit_text(LANGUAGES[lang]["select_product"].format(brand=brand), reply_markup=keyboard)
-        await state.update_data(brand=brand)
-        await state.set_state(OrderState.selecting_product)
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Error in process_brand: {e}")
-        await callback.message.edit_text("Something went wrong. Please try again.")
+    parts = callback.data.split(":")
+    store, category, brand = parts[1], parts[2], parts[3]
+    lang = get_user_language(callback.from_user.id)
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, name, price, description, image_url FROM products WHERE store = ? AND category = ? AND brand = ?", 
+              (store, category, brand))
+    products = c.fetchall()
+    conn.close()
+    
+    logging.debug(f"Products for {store}/{category}/{brand}: {[dict(p) for p in products]}")
+    if not products:
+        await callback.message.edit_text(LANGUAGES[lang]["no_products_brand"].format(store=store, category=category, brand=brand))
         await state.clear()
-
+        return
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{p['name']} - {p['price']} UZS", callback_data=f"prod:{store}:{category}:{brand}:{p['id']}")]
+        for p in products
+    ] + [[InlineKeyboardButton(text=LANGUAGES[lang]["back_button"], callback_data="back_to_category")]])
+    
+    await callback.message.edit_text(LANGUAGES[lang]["select_product"].format(brand=brand), reply_markup=keyboard)
+    await state.update_data(brand=brand)
+    await state.set_state(OrderState.selecting_product)
+    await callback.answer()
+    
 @router.callback_query(F.data.startswith("prod:"), OrderState.selecting_product)
 async def process_product(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -1740,7 +1680,7 @@ async def add_product_command(message: Message, state: FSMContext):
     conn.close()
 
     if not stores:
-        await message.answer("No stores available. Please add stores to the database first.")
+        await message.answer("No stores available. Please add stores first.")
         return
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1750,13 +1690,14 @@ async def add_product_command(message: Message, state: FSMContext):
     await message.answer(LANGUAGES[lang]["select_store"], reply_markup=keyboard)
     await state.set_state(AddProductState.waiting_for_store)
 
+
 @router.callback_query(F.data.startswith("store:"), AddProductState.waiting_for_store)
 async def select_store(callback: types.CallbackQuery, state: FSMContext):
     try:
         store = callback.data.split(":")[1]
-        logging.info(f"Selected store for adding product: {store}")
         lang = get_user_language(callback.from_user.id)
         await state.update_data(store=store)
+        logging.debug(f"Admin selected store: {store}")
         await callback.message.edit_text(LANGUAGES[lang]["enter_category"])
         await state.set_state(AddProductState.waiting_for_category)
         await callback.answer()
@@ -1764,91 +1705,100 @@ async def select_store(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"Error in select_store: {e}")
         await callback.message.edit_text("Something went wrong. Please try again.")
         await state.clear()
-
+        
 @router.message(AddProductState.waiting_for_category)
 async def process_category_input(message: Message, state: FSMContext):
-    try:
-        category = message.text.strip()
-        lang = get_user_language(message.from_user.id)
-        if not category:
-            await message.answer(LANGUAGES[lang]["category_empty"])
-            return
-        await state.update_data(category=category)
-        await message.answer(LANGUAGES[lang]["enter_brand"])
-        await state.set_state(AddProductState.waiting_for_brand)
-    except Exception as e:
-        logging.error(f"Error in process_category_input: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
-
+    category = message.text.strip()
+    lang = get_user_language(message.from_user.id)
+    if not category:
+        await message.answer(LANGUAGES[lang]["category_empty"])
+        return
+    await state.update_data(category=category)
+    logging.debug(f"Admin entered category: {category}")
+    await message.answer(LANGUAGES[lang]["enter_brand"])
+    await state.set_state(AddProductState.waiting_for_brand)
+    
 @router.message(AddProductState.waiting_for_brand)
 async def process_brand_input(message: Message, state: FSMContext):
-    try:
-        brand = message.text.strip()
-        lang = get_user_language(message.from_user.id)
-        if not brand:
-            await message.answer(LANGUAGES[lang]["brand_empty"])
-            return
-        await state.update_data(brand=brand)
-        await message.answer(LANGUAGES[lang]["enter_name_prod"])
-        await state.set_state(AddProductState.waiting_for_product_name)
-    except Exception as e:
-        logging.error(f"Error in process_brand_input: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
+    brand = message.text.strip()
+    lang = get_user_language(message.from_user.id)
+    if not brand:
+        await message.answer(LANGUAGES[lang]["brand_empty"])
+        return
+    await state.update_data(brand=brand)
+    logging.debug(f"Admin entered brand: {brand}")
+    await message.answer(LANGUAGES[lang]["enter_name_prod"])
+    await state.set_state(AddProductState.waiting_for_product_name)
 
 @router.message(AddProductState.waiting_for_product_name)
 async def process_product_name(message: Message, state: FSMContext):
-    try:
-        name = message.text.strip()
-        lang = get_user_language(message.from_user.id)
-        if not name:
-            await message.answer(LANGUAGES[lang]["name_empty_prod"])
-            return
-        await state.update_data(name=name)
-        await message.answer(LANGUAGES[lang]["enter_price"])
-        await state.set_state(AddProductState.waiting_for_product_price)
-    except Exception as e:
-        logging.error(f"Error in process_product_name: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
-
+    name = message.text.strip()
+    lang = get_user_language(message.from_user.id)
+    if not name:
+        await message.answer(LANGUAGES[lang]["name_empty_prod"])
+        return
+    await state.update_data(name=name)
+    logging.debug(f"Admin entered product name: {name}")
+    await message.answer(LANGUAGES[lang]["enter_price"])
+    await state.set_state(AddProductState.waiting_for_product_price)
+    
 @router.message(AddProductState.waiting_for_product_price)
 async def process_product_price(message: Message, state: FSMContext):
+    lang = get_user_language(message.from_user.id)
     try:
-        lang = get_user_language(message.from_user.id)
-        try:
-            price = float(message.text.strip())
-            if price <= 0:
-                await message.answer(LANGUAGES[lang]["price_negative"])
-                return
-        except ValueError:
-            await message.answer(LANGUAGES[lang]["price_invalid"])
+        price = float(message.text.strip())
+        if price <= 0:
+            await message.answer(LANGUAGES[lang]["price_negative"])
             return
-        await state.update_data(price=price)
-        await message.answer(LANGUAGES[lang]["enter_description"])
-        await state.set_state(AddProductState.waiting_for_product_description)
-    except Exception as e:
-        logging.error(f"Error in process_product_price: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
-
+    except ValueError:
+        await message.answer(LANGUAGES[lang]["price_invalid"])
+        return
+    await state.update_data(price=price)
+    logging.debug(f"Admin entered price: {price}")
+    await message.answer(LANGUAGES[lang]["enter_description"])
+    await state.set_state(AddProductState.waiting_for_product_description)
+    
 @router.message(AddProductState.waiting_for_product_description)
 async def process_product_description(message: Message, state: FSMContext):
-    try:
-        description = message.text.strip()
-        lang = get_user_language(message.from_user.id)
-        if not description:
-            await message.answer(LANGUAGES[lang]["description_empty"])
-            return
-        await state.update_data(description=description)
-        await message.answer(LANGUAGES[lang]["enter_photo"])
-        await state.set_state(AddProductState.waiting_for_photo)
-    except Exception as e:
-        logging.error(f"Error in process_product_description: {e}")
-        await message.answer("Something went wrong. Please try again.")
-        await state.clear()
-
+    description = message.text.strip()
+    lang = get_user_language(message.from_user.id)
+    if not description:
+        await message.answer(LANGUAGES[lang]["description_empty"])
+        return
+    await state.update_data(description=description)
+    logging.debug(f"Admin entered description: {description}")
+    await message.answer(LANGUAGES[lang]["enter_photo"])
+    await state.set_state(AddProductState.waiting_for_photo)
+    
+@router.message(AddProductState.waiting_for_photo)
+async def process_product_photo(message: Message, state: FSMContext):
+    lang = get_user_language(message.from_user.id)
+    user_data = await state.get_data()
+    
+    if message.text == "/skip":
+        image_url = None
+    elif message.photo:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        image_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file.file_path}"
+    else:
+        await message.answer("Please send a photo or type /skip")
+        return
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO products (store, category, brand, name, price, description, image_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (user_data["store"], user_data["category"], user_data["brand"], 
+          user_data["name"], user_data["price"], user_data["description"], image_url))
+    product_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    
+    logging.debug(f"Product saved: ID={product_id}, Store={user_data['store']}, Name={user_data['name']}")
+    await message.answer(LANGUAGES[lang]["product_added"].format(name=user_data["name"]))
+    await state.clear()
 # Note: process_product_photo will be in the next segment (Lines 1001–1500) with the updated fix.
 
 @router.message(Command("view_products"))
