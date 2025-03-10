@@ -16,6 +16,38 @@ from aiogram.filters import Command
 from aiogram import F
 from fastapi import FastAPI
 import geopy.distance
+import os
+from logging.handlers import RotatingFileHandler
+
+# Создаем директорию для логов если её нет
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Настройка логгера
+logger = logging.getLogger('bot_logger')
+logger.setLevel(logging.DEBUG)
+
+# Форматтер для логов
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
+
+# Файловый обработчик с ротацией
+file_handler = RotatingFileHandler(
+    'logs/bot.log',
+    maxBytes=5*1024*1024,  # 5MB
+    backupCount=3,
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+# Консольный обработчик
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+# Добавляем обработчики к логгеру
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -383,10 +415,10 @@ def get_db_connection():
 def setup_db():
     conn = get_db_connection()
     c = conn.cursor()
-    logging.info("Setting up database...")
+    logger.info("Setting up database...")
     # ... (rest of the function)
     conn.commit()
-    logging.info("Database setup completed.")
+    logger.info("Database setup completed.")
     conn.close()
     
     c.execute("""
@@ -632,7 +664,7 @@ async def auto_set_delivery_time(order_id: int, user_id: int, cart_text: str, to
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Rate Delivery", callback_data=f"rate_delivery:{order_id}")]
             ])
-            await bot.send_message(user_id, f"Admin didn’t respond in time. Default delivery time set to 35 minutes.\n{order_message}", reply_markup=keyboard)
+            await bot.send_message(user_id, f"Admin didn't respond in time. Default delivery time set to 35 minutes.\n{order_message}", reply_markup=keyboard)
             for admin_id in ADMIN_ID:
                 await bot.send_message(admin_id, f"Order #{order_id} auto-confirmed with 35-minute delivery due to no response.")
             logging.info(f"Order #{order_id} auto-confirmed with 35-minute delivery.")
@@ -673,7 +705,7 @@ async def process_language(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(RegisterState.waiting_for_name)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Error in process_language: {e}")
+        log_exception(e, "process_language")
         await callback.message.edit_text("Error occurred. Please try /start again.")
         await state.clear()
 
@@ -2137,6 +2169,9 @@ async def process_discount_value(message: Message, state: FSMContext):
 async def main():
     setup_db()
     await dp.start_polling(bot)
+
+def log_exception(e: Exception, context: str):
+    logger.error(f"Error in {context}: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
